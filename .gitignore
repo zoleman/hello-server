@@ -1,0 +1,13 @@
+# Go build output
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# IDE / editor files
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
