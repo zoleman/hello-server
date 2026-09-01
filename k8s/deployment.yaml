@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: hello-server
+
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: hello-server
+
+  template:
+    metadata:
+      labels:
+        app: hello-server
+
+    spec:
+      containers:
+        - name: hello-server
+          image: zoleman/hello-server:latest
+          ports:
+            - containerPort: 8080
