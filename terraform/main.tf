@@ -13,7 +13,14 @@ provider "kubernetes" {
 }
 
 resource "kubernetes_manifest" "deployment" {
-  manifest = yamldecode(file("${path.module}/../k8s/deployment.yaml"))
+  manifest = yamldecode(
+    templatefile(
+      "${path.module}/../k8s/deployment.yaml.tftpl",
+      {
+        image_tag = var.image_tag
+      }
+    )
+  )
 }
 
 resource "kubernetes_manifest" "service" {
