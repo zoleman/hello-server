@@ -16,6 +16,14 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      
+      - name: Run Go tests
+        run: go test ./...
 
       - name: Log in to Docker Hub
         if: github.event_name == 'push'
@@ -23,10 +31,22 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-
+      
       - name: Build Docker image
-        run: docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/hello-server:latest .
+        run: docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/hello-server:test .
+      
+      - name: Run container
+        run: docker run -d --name hello-server-test -p 8080:8080 ${{ secrets.DOCKERHUB_USERNAME }}/hello-server:test
+
+      - name: Test health endpoint
+        run: curl --fail --retry 10 --retry-delay 1 --retry-connrefused http://localhost:8080/health
+
+      - name: Stop container
+        if: always()
+        run: docker rm -f hello-server-test
 
       - name: Push Docker image
         if: github.event_name == 'push'
-        run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/hello-server:latest
+        run: |
+          docker tag ${{ secrets.DOCKERHUB_USERNAME }}/hello-server:test ${{ secrets.DOCKERHUB_USERNAME }}/hello-server:latest
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/hello-server:latest
