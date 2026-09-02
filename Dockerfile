@@ -9,4 +9,12 @@ COPY . .
 
 RUN go build -o hello-server .
 
+FROM debian:bookworm-slim
+
+WORKDIR /app
+
+COPY --from=builder /app/hello-server .
+
+EXPOSE 8080
+
 CMD ["./hello-server"]
