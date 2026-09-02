@@ -3,6 +3,7 @@ kind: Service
 
 metadata:
   name: hello-server
+  namespace: default
 
 spec:
   type: NodePort

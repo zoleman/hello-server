@@ -3,6 +3,7 @@ kind: Deployment
 
 metadata:
   name: hello-server
+  namespace: default
 
 spec:
   replicas: 1
