@@ -16,6 +16,7 @@ locals {
   deployment           = yamldecode(file("${path.module}/../k8s/deployment.yaml"))
   deployment_container = local.deployment.spec.template.spec.containers[0]
   service              = yamldecode(file("${path.module}/../k8s/service.yaml"))
+  hpa                  = yamldecode(file("${path.module}/../k8s/hpa.yaml"))
 }
 
 resource "kubernetes_manifest" "deployment" {
@@ -73,6 +74,15 @@ resource "kubernetes_manifest" "service" {
           targetPort = var.app_port
         })
       ]
+    })
+  })
+}
+
+resource "kubernetes_manifest" "hpa" {
+  manifest = merge(local.hpa, {
+    spec = merge(local.hpa.spec, {
+      minReplicas = var.min_replicas
+      maxReplicas = var.max_replicas
     })
   })
 }
