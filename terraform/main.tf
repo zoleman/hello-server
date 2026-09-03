@@ -21,6 +21,9 @@ locals {
 
 resource "kubernetes_manifest" "deployment" {
   manifest = merge(local.deployment, {
+    metadata = merge(local.deployment.metadata, {
+      namespace = var.namespace
+    })
     spec = merge(local.deployment.spec, {
       template = merge(local.deployment.spec.template, {
         spec = merge(local.deployment.spec.template.spec, {
@@ -68,6 +71,9 @@ resource "kubernetes_manifest" "deployment" {
 
 resource "kubernetes_manifest" "service" {
   manifest = merge(local.service, {
+    metadata = merge(local.service.metadata, {
+      namespace = var.namespace
+    })
     spec = merge(local.service.spec, {
       ports = [
         merge(local.service.spec.ports[0], {
@@ -80,9 +86,18 @@ resource "kubernetes_manifest" "service" {
 
 resource "kubernetes_manifest" "hpa" {
   manifest = merge(local.hpa, {
+    metadata = merge(local.hpa.metadata, {
+      namespace = var.namespace
+    })
     spec = merge(local.hpa.spec, {
       minReplicas = var.min_replicas
       maxReplicas = var.max_replicas
     })
   })
+}
+
+resource "kubernetes_namespace_v1" "app" {
+  metadata {
+    name = var.namespace
+  }
 }
