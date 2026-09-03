@@ -22,14 +22,19 @@ func main() {
 	http.HandleFunc("/health", healthHandler)
 	http.HandleFunc("/", helloHandler)
 
+	port := os.Getenv("APP_PORT")
+		if port == "" {
+			port = "8080"
+		}
+
 	server := &http.Server{
-		Addr: ":8080",
+		Addr: ":" + port,
 	}
 
 	serverErrors := make(chan error, 1)
 
 	go func() {
-		fmt.Println("Server listening on http://localhost:8080")
+		fmt.Printf("Server listening on http://localhost:%s\n", port)
 		serverErrors <- server.ListenAndServe()
 	}()
 
@@ -54,13 +59,4 @@ func main() {
 
 		fmt.Println("Server stopped")
 	}
-
-	/*old server
-	fmt.Println("Server listening on http://localhost:8080")
-
-	err := http.ListenAndServe(":8080", nil)
-	if err != nil {
-		fmt.Println(err)
-	}
-	*/
 }
