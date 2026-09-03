@@ -27,3 +27,25 @@ variable "app_port" {
     error_message = "app_port must be between 1 and 65535."
   }
 }
+
+variable "min_replicas" {
+  description = "Minimum number of application replicas"
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.min_replicas >= 1
+    error_message = "min_replicas must be at least 1."
+  }
+}
+
+variable "max_replicas" {
+  description = "Maximum number of application replicas"
+  type        = number
+  default     = 3
+
+  validation {
+    condition     = var.max_replicas >= var.min_replicas
+    error_message = "max_replicas must be greater than or equal to min_replicas."
+  }
+}
