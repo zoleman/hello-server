@@ -12,15 +12,25 @@ provider "kubernetes" {
   config_context = "minikube"
 }
 
+locals {
+  deployment = yamldecode(file("${path.module}/../k8s/deployment.yaml"))
+}
+
 resource "kubernetes_manifest" "deployment" {
-  manifest = yamldecode(
-    templatefile(
-      "${path.module}/../k8s/deployment.yaml.tftpl",
-      {
-        image_tag = var.image_tag
-      }
-    )
-  )
+  manifest = merge(local.deployment, {
+    spec = merge(local.deployment.spec, {
+      template = merge(local.deployment.spec.template, {
+        spec = merge(local.deployment.spec.template.spec, {
+          containers = [
+            {
+              name  = "hello-server"
+              image = "zoleman/hello-server:${var.image_tag}"
+            }
+          ]
+        })
+      })
+    })
+  })
 }
 
 resource "kubernetes_manifest" "service" {
