@@ -12,6 +12,7 @@ on:
 env:
   IMAGE_REPOSITORY: ${{ vars.IMAGE_REPOSITORY }}
   APP_PORT: ${{ vars.APP_PORT }}
+  APP_USER: ${{ vars.APP_USER }}
 
 jobs:
   docker:
