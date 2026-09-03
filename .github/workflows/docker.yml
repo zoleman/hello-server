@@ -12,6 +12,7 @@ on:
 env:
   IMAGE_REPOSITORY: ${{ vars.IMAGE_REPOSITORY }}
   APP_PORT: ${{ vars.APP_PORT }}
+  APP_USER: ${{ vars.APP_USER }}
 
 jobs:
   docker:
@@ -37,7 +38,11 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build Docker image
-        run: docker build -t $IMAGE_REPOSITORY:${{ github.sha }} .
+        run: |
+            docker build \
+              --build-arg APP_USER=$APP_USER \
+              -t $IMAGE_REPOSITORY:${{ github.sha }} \
+              .
 
       - name: Run container
         run: |
