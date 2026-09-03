@@ -24,6 +24,10 @@ spec:
         app: hello-server
 
     spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+          
       containers:
         - name: hello-server
           image: zoleman/hello-server:latest
@@ -36,6 +40,9 @@ spec:
             runAsNonRoot: true
             runAsUser: 10001
             allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
           
           resources:
             requests:
