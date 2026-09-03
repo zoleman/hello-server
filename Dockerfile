@@ -11,9 +11,15 @@ RUN go build -o hello-server .
 
 FROM debian:bookworm-slim
 
+ARG APP_USER=appuser
+
 WORKDIR /app
 
-COPY --from=builder /app/hello-server .
+RUN useradd --system --uid 10001 --create-home ${APP_USER}
+
+COPY --from=builder --chown=${APP_USER}:${APP_USER} /app/hello-server .
+
+USER ${APP_USER}
 
 ENV APP_PORT=8080
 

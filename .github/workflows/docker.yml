@@ -37,7 +37,9 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build Docker image
-        run: docker build -t $IMAGE_REPOSITORY:${{ github.sha }} .
+        run: docker build \
+              --build-arg APP_USER=$APP_USER \
+              -t $IMAGE_REPOSITORY:${{ github.sha }} .
 
       - name: Run container
         run: |
