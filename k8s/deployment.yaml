@@ -21,6 +21,7 @@ spec:
       containers:
         - name: hello-server
           image: zoleman/hello-server:latest
+          imagePullPolicy: Always
           
           ports:
             - containerPort: 8080
