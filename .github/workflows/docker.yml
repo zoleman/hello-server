@@ -37,13 +37,11 @@ jobs:
         working-directory: terraform
         run: terraform validate
 
-      - name: Setup kubectl
-        uses: azure/setup-kubectl@v4
+      - name: Setup Kubeconform
+        uses: bmuschko/setup-kubeconform@v1
 
       - name: Validate Kubernetes manifests
-        run: |
-          kubectl apply --dry-run=client --validate=false -f k8s/deployment.yaml
-          kubectl apply --dry-run=client --validate=false -f k8s/service.yaml
+        run: kubeconform -strict -summary k8s/
 
       - name: Set up Go
         uses: actions/setup-go@v5
