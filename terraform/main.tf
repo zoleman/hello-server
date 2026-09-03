@@ -22,10 +22,12 @@ resource "kubernetes_manifest" "deployment" {
       template = merge(local.deployment.spec.template, {
         spec = merge(local.deployment.spec.template.spec, {
           containers = [
-            {
-              name  = "hello-server"
-              image = "zoleman/hello-server:${var.image_tag}"
-            }
+            merge(
+              local.deployment.spec.template.spec.containers[0],
+              {
+                image = "zoleman/hello-server:${var.image_tag}"
+              }
+            )
           ]
         })
       })
