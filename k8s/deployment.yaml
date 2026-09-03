@@ -20,7 +20,7 @@ spec:
     spec:
       containers:
         - name: hello-server
-          image: zoleman/hello-server:${image_tag}
+          image: zoleman/hello-server:latest
           ports:
             - containerPort: 8080
 
