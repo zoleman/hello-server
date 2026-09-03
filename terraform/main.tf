@@ -18,6 +18,7 @@ locals {
   service              = yamldecode(file("${path.module}/../k8s/service.yaml"))
   hpa                  = yamldecode(file("${path.module}/../k8s/hpa.yaml"))
   pdb                  = yamldecode(file("${path.module}/../k8s/pdb.yaml"))
+  serviceaccount       = yamldecode(file("${path.module}/../k8s/serviceaccount.yaml"))
 }
 
 resource "kubernetes_manifest" "deployment" {
@@ -114,4 +115,17 @@ resource "kubernetes_manifest" "pdb" {
   })
 
   depends_on = [kubernetes_namespace_v1.app]
+}
+
+resource "kubernetes_manifest" "serviceaccount" {
+  manifest = merge(local.serviceaccount, {
+    metadata = merge(local.serviceaccount.metadata, {
+      namespace = var.namespace
+    })
+  })
+
+  depends_on = [
+    kubernetes_namespace_v1.app,
+    kubernetes_manifest.serviceaccount
+  ]
 }
