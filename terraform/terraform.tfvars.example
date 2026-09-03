@@ -1,1 +1,3 @@
 image_tag = "replace-with-git-commit-sha"
+image_repository = "your repository here"
+app_port = portnumber
