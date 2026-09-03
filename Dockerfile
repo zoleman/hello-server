@@ -15,6 +15,8 @@ WORKDIR /app
 
 COPY --from=builder /app/hello-server .
 
+ENV APP_PORT=8080
+
 EXPOSE 8080
 
 CMD ["./hello-server"]

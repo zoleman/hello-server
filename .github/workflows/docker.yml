@@ -9,6 +9,10 @@ on:
     branches:
       - main
 
+env:
+  IMAGE_REPOSITORY: ${{ vars.IMAGE_REPOSITORY }}
+  APP_PORT: ${{ vars.APP_PORT }}
+
 jobs:
   docker:
     runs-on: ubuntu-latest
@@ -33,13 +37,18 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build Docker image
-        run: docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/hello-server:${{ github.sha }} .
+        run: docker build -t $IMAGE_REPOSITORY:${{ github.sha }} .
 
       - name: Run container
-        run: docker run -d --name hello-server-test -p 8080:8080 ${{ secrets.DOCKERHUB_USERNAME }}/hello-server:${{ github.sha }}
+        run: |
+          docker run -d \
+            --name hello-server-test \
+            -e APP_PORT=$APP_PORT \
+            -p $APP_PORT:$APP_PORT \
+            $IMAGE_REPOSITORY:${{ github.sha }}
 
       - name: Test health endpoint
-        run: curl --fail --retry 10 --retry-delay 1 --retry-connrefused http://localhost:8080/health
+        run: curl --fail --retry 10 --retry-delay 1 --retry-connrefused http://localhost:$APP_PORT/health
 
       - name: Stop container
         if: always()
@@ -48,6 +57,6 @@ jobs:
       - name: Push Docker image
         if: github.event_name == 'push'
         run: |
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/hello-server:${{ github.sha }}
-          docker tag ${{ secrets.DOCKERHUB_USERNAME }}/hello-server:${{ github.sha }} ${{ secrets.DOCKERHUB_USERNAME }}/hello-server:latest
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/hello-server:latest
+          docker push $IMAGE_REPOSITORY:${{ github.sha }}
+          docker tag $IMAGE_REPOSITORY:${{ github.sha }} $IMAGE_REPOSITORY:latest
+          docker push $IMAGE_REPOSITORY:latest
