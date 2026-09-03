@@ -17,6 +17,7 @@ locals {
   deployment_container = local.deployment.spec.template.spec.containers[0]
   service              = yamldecode(file("${path.module}/../k8s/service.yaml"))
   hpa                  = yamldecode(file("${path.module}/../k8s/hpa.yaml"))
+  pdb                  = yamldecode(file("${path.module}/../k8s/pdb.yaml"))
 }
 
 resource "kubernetes_manifest" "deployment" {
@@ -100,4 +101,17 @@ resource "kubernetes_namespace_v1" "app" {
   metadata {
     name = var.namespace
   }
+}
+
+resource "kubernetes_manifest" "pdb" {
+  manifest = merge(local.pdb, {
+    metadata = merge(local.pdb.metadata, {
+      namespace = var.namespace
+    })
+    spec = merge(local.pdb.spec, {
+      minAvailable = var.min_replicas
+    })
+  })
+
+  depends_on = [kubernetes_namespace_v1.app]
 }

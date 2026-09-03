@@ -1,0 +1,13 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+
+metadata:
+  name: hello-server
+  namespace: default
+
+spec:
+  minAvailable: 1
+
+  selector:
+    matchLabels:
+      app: hello-server
