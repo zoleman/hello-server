@@ -79,7 +79,7 @@ hello-server/
 │       └── docker.yml
 │
 ├── k8s/
-│   ├── deployment.yaml.tftpl
+│   ├── deployment.yaml
 │   └── service.yaml
 │
 └── terraform/
@@ -106,7 +106,7 @@ hello-server/
 
 ### Kubernetes Files
 
-- `k8s/deployment.yaml.tftpl` — Kubernetes Deployment template containing the application container configuration and health probes
+- `k8s/deployment.yaml` — Kubernetes Deployment containing the application container configuration and health probes
 - `k8s/service.yaml` — Kubernetes Service used to expose the application
 
 ### Terraform Files
@@ -603,7 +603,7 @@ The Kubernetes configuration is stored in:
 
 ```text
 k8s/
-├── deployment.yaml.tftpl
+├── deployment.yaml
 └── service.yaml
 ```
 
@@ -1233,7 +1233,7 @@ Minikube Kubernetes API
 The Deployment is stored as a Terraform template:
 
 ```text
-k8s/deployment.yaml.tftpl
+k8s/deployment.yaml
 ```
 
 The Docker image is defined using the `image_tag` template variable:
