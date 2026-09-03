@@ -1,5 +1,6 @@
 image_tag = "replace-with-git-commit-sha"
-image_repository = "your repository here"
-app_port = portnumber
-min_replicas = amount
-max_replicas = amount
+image_repository = "your-repository-here"
+app_port = digits
+min_replicas = digits
+max_replicas = digits
+namespace = "your-namespace-here"

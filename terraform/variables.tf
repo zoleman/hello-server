@@ -49,3 +49,14 @@ variable "max_replicas" {
     error_message = "max_replicas must be greater than or equal to min_replicas."
   }
 }
+
+variable "namespace" {
+  description = "Kubernetes namespace for the application"
+  type        = string
+  default     = "hello-server"
+
+  validation {
+    condition     = length(trimspace(var.namespace)) > 0
+    error_message = "namespace must not be empty."
+  }
+}
