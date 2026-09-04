@@ -12,7 +12,10 @@ The project demonstrates the progression from local development to automated CI/
 ## Table of Contents
 
 - [Overview](#hello-server)
+- [Requirements](#requirements)
+- [Quick Start](#quick-start)
 - [Architecture](#architecture)
+- [Repository Structure](#repository-structure)
 - [Application](#application)
 - [Testing](#testing)
 - [Docker](#docker)
@@ -27,42 +30,162 @@ The project demonstrates the progression from local development to automated CI/
 - [Complete Delivery Flow](#complete-delivery-flow)
 - [Future Improvements](#future-improvements)
 
+
+## Requirements
+
+The following tools are required to run and manage the project locally:
+
+- Bash
+- Docker
+- Minikube
+- kubectl
+- Terraform 1.13.x
+- Go 1.25
+
+Terraform automatically installs the required Kubernetes provider (`2.38.x`) during `terraform init`.
+
+For local infrastructure validation and deployment, Minikube must be running.
+
+## Quick Start
+
+The project includes helper scripts for setting up the local Kubernetes cluster, validating the project, and managing Terraform environments.
+
+### 1. Start Minikube
+
+```bash
+./scripts/setup-minikube.sh
+```
+
+This starts Minikube using the Docker driver if necessary and ensures the Metrics Server addon is enabled.
+
+### 2. Validate the Project
+
+```bash
+./scripts/validate.sh
+```
+
+This runs:
+
+- Go unit tests
+- Terraform formatting checks
+- Terraform validation
+- Kubernetes manifest validation against the local Minikube API server
+
+### 3. Create Terraform Workspaces
+
+```bash
+./scripts/create-workspaces.sh
+```
+
+This creates the `dev`, `qa`, and `prod` Terraform workspaces if they do not already exist.
+
+### 4. Deploy an Environment
+
+For example, deploy development:
+
+```bash
+./scripts/deploy-environment.sh dev
+```
+
+The deployment script selects the corresponding Terraform workspace and variable file.
+
+Supported environments are:
+
+- `dev`
+- `qa`
+- `prod`
+
+### 5. Check the Deployment
+
+```bash
+./scripts/status.sh dev
+```
+
+This displays the Kubernetes Pods, Services, Deployment, HPA, PodDisruptionBudget, and current Pod resource usage.
+
+### 6. Clean Up
+
+Destroy the environment:
+
+```bash
+./scripts/destroy-environment.sh dev
+```
+
+After all environments have been destroyed, the Terraform workspaces can also be removed:
+
+```bash
+./scripts/destroy-workspaces.sh
+```
+
+[Back to top](#hello-server)
+
 ## Architecture
 
 The project uses the following components:
 
-- **Go** — implements the HTTP server and its tests
+- **Go** — implements the HTTP server and unit tests
 - **Docker** — packages the application into a container image
-- **GitHub Actions** — runs tests, builds the Docker image, validates the container, and publishes releases
-- **Docker Hub** — stores the published Docker images
-- **Kubernetes / Minikube** — runs and manages the application container
-- **Terraform** — manages the Kubernetes Deployment and Service
+- **GitHub Actions** — validates pull requests and publishes container images after changes are merged to `main`
+- **Docker Hub** — stores released container images
+- **Kubernetes** — runs, scales, monitors, and exposes the application
+- **Minikube** — provides the local Kubernetes cluster
+- **Terraform** — manages Kubernetes resources using the standalone manifests in `k8s/`
+- **Bash scripts** — provide repeatable local validation, deployment, status, load testing, and cleanup workflows
 
 ### Application Delivery Flow
 
 ```mermaid
 flowchart TD
-    A[Developer] --> B[GitHub Repository]
+    A[Developer] --> B[Pull Request]
 
-    B --> C[GitHub Actions]
+    B --> C[GitHub Actions - Validation]
+    C --> D[Go Tests]
+    C --> E[Terraform Validation]
+    C --> F[Kubernetes Validation]
+    C --> G[Docker Build and Health Check]
 
-    C --> D[Go Unit Tests]
-    C --> E[Docker Build]
-    E --> F[Container Healthcheck]
+    C --> H[Merge to main]
 
-    F --> G[Docker Hub]
+    H --> I[GitHub Actions - Release]
+    I --> J[Docker Build]
+    J --> K[Docker Hub]
 
-    G --> H[Kubernetes / Minikube]
-    H --> I[Deployment]
-    I --> J[Pod]
-    H --> K[Service]
+    K --> L[Immutable SHA Image]
+    K --> M[Latest Image]
 
-    L[Terraform] --> H
+    N[Terraform] --> O[Kubernetes / Minikube]
+    L --> O
 
-    J --> M["/ and /health"]
-    K --> M
+    O --> P[Deployment]
+    O --> Q[Service]
+    O --> R[HPA]
+    O --> S[PodDisruptionBudget]
+    O --> T[ServiceAccount]
+
+    P --> U[Application Pods]
+    Q --> U
 ```
 
+### Environment Model
+
+Terraform uses separate workspaces and variable files for each deployment environment:
+
+```text
+Terraform
+    │
+    ├── dev workspace  + dev.tfvars
+    │       └── hello-server-dev
+    │
+    ├── qa workspace   + qa.tfvars
+    │       └── hello-server-qa
+    │
+    └── prod workspace + prod.tfvars
+            └── hello-server-prod
+```
+
+The Kubernetes manifests remain shared between environments. Terraform supplies environment-specific values such as namespace, image version, application port, and replica limits.
+
+[Back to top](#hello-server)
 
 ## Repository Structure
 
@@ -73,6 +196,7 @@ hello-server/
 ├── go.mod
 ├── Dockerfile
 ├── .gitignore
+├── README.md
 │
 ├── .github/
 │   └── workflows/
@@ -80,41 +204,80 @@ hello-server/
 │
 ├── k8s/
 │   ├── deployment.yaml
-│   └── service.yaml
+│   ├── service.yaml
+│   ├── hpa.yaml
+│   ├── pdb.yaml
+│   └── serviceaccount.yaml
+│
+├── scripts/
+│   ├── setup-minikube.sh
+│   ├── validate.sh
+│   ├── status.sh
+│   ├── create-workspaces.sh
+│   ├── destroy-workspaces.sh
+│   ├── deploy-environment.sh
+│   ├── destroy-environment.sh
+│   ├── start-load.sh
+│   └── stop-load.sh
 │
 └── terraform/
     ├── .gitignore
     ├── .terraform.lock.hcl
     ├── main.tf
-    └── variables.tf
+    ├── variables.tf
+    │
+    └── environments/
+        ├── dev.tfvars
+        ├── qa.tfvars
+        └── prod.tfvars
 ```
 
 ### Application Files
 
-- `main.go` — HTTP server implementation, endpoints, and graceful shutdown logic
+- `main.go` — HTTP server implementation, configurable application port, endpoints, and graceful shutdown logic
 - `main_test.go` — unit tests for the HTTP handlers
 - `go.mod` — Go module definition
 
 ### Docker Files
 
-- `Dockerfile` — multi-stage Docker build configuration
-- `.gitignore` — prevents generated files and other local artifacts from being committed
+- `Dockerfile` — multi-stage Docker build using pinned base images and a non-root runtime user
+- `.gitignore` — excludes generated and local files from Git
 
 ### GitHub Actions
 
-- `.github/workflows/docker.yml` — CI/CD workflow that runs tests, builds the Docker image, validates the running container, and publishes successful builds to Docker Hub
+- `.github/workflows/docker.yml` — separates pull request validation from container image publishing on `main`
 
 ### Kubernetes Files
 
-- `k8s/deployment.yaml` — Kubernetes Deployment containing the application container configuration and health probes
-- `k8s/service.yaml` — Kubernetes Service used to expose the application
+- `k8s/deployment.yaml` — application Deployment, health probes, resource limits, rolling update strategy, and container security configuration
+- `k8s/service.yaml` — exposes the application through a Kubernetes Service
+- `k8s/hpa.yaml` — automatically scales application replicas based on CPU utilization
+- `k8s/pdb.yaml` — defines the PodDisruptionBudget
+- `k8s/serviceaccount.yaml` — dedicated ServiceAccount used by the application Pods
+
+The Kubernetes files are valid standalone YAML manifests. Terraform reads these manifests and applies environment-specific overrides when deploying them.
 
 ### Terraform Files
 
-- `terraform/main.tf` — configures the Kubernetes provider and manages the Kubernetes Deployment and Service
-- `terraform/variables.tf` — defines configurable Terraform variables, including the Docker image tag
-- `terraform/.terraform.lock.hcl` — locks the Terraform provider version
-- `terraform/.gitignore` — excludes Terraform-generated files such as provider binaries and state files
+- `terraform/main.tf` — configures the Kubernetes provider and manages the Kubernetes resources
+- `terraform/variables.tf` — defines deployment variables and validation rules
+- `terraform/.terraform.lock.hcl` — locks Terraform provider versions
+- `terraform/.gitignore` — excludes Terraform-generated files and local state
+- `terraform/environments/dev.tfvars` — development environment configuration
+- `terraform/environments/qa.tfvars` — QA environment configuration
+- `terraform/environments/prod.tfvars` — production environment configuration
+
+### Helper Scripts
+
+- `scripts/setup-minikube.sh` — starts Minikube when necessary and enables Metrics Server
+- `scripts/validate.sh` — runs application, Terraform, and Kubernetes validation
+- `scripts/status.sh` — displays the current application and Kubernetes resource status
+- `scripts/create-workspaces.sh` — creates the Terraform environment workspaces
+- `scripts/destroy-workspaces.sh` — removes empty Terraform environment workspaces
+- `scripts/deploy-environment.sh` — deploys a selected environment
+- `scripts/destroy-environment.sh` — destroys a selected environment
+- `scripts/start-load.sh` — generates application load for HPA testing
+- `scripts/stop-load.sh` — stops the HPA load generator
 
 [Back to top](#hello-server)
 
@@ -122,7 +285,9 @@ hello-server/
 
 The application is a small HTTP server written in Go.
 
-It listens on port `8080` and provides two endpoints.
+The application listens on the port configured through the `APP_PORT` environment variable.
+
+If `APP_PORT` is not set, the application defaults to port `8080`.
 
 ### Endpoints
 
@@ -159,6 +324,26 @@ The endpoint is used by multiple parts of the delivery system:
 
 This provides a common health signal throughout the application lifecycle.
 
+### Application Port
+
+The listening port can be configured using the `APP_PORT` environment variable.
+
+For example:
+
+```bash
+APP_PORT=9090 go run .
+```
+
+The application will then listen on port `9090`.
+
+If the variable is omitted:
+
+```bash
+go run .
+```
+
+the application falls back to port `8080`.
+
 ### Graceful Shutdown
 
 The HTTP server handles both `SIGINT` and `SIGTERM` signals.
@@ -176,26 +361,43 @@ This is particularly important when the application is running inside a containe
 
 Start the application with:
 
-```powershell
+```bash
 go run .
 ```
 
-The server listens on:
+The application will be available at:
 
 ```text
 http://localhost:8080
 ```
 
-The endpoints can then be tested with:
+Test the root endpoint:
 
-```powershell
+```bash
 curl http://localhost:8080/
+```
+
+Expected response:
+
+```text
+Hello, World!
+```
+
+Test the health endpoint:
+
+```bash
 curl http://localhost:8080/health
 ```
 
-Stop the server with `Ctrl+C`.
+Expected response:
 
-The application will perform a graceful shutdown.
+```text
+healthy
+```
+
+Stop the application with `Ctrl+C`.
+
+The server handles the interrupt signal and performs a graceful shutdown before exiting.
 
 [Back to top](#hello-server)
 
@@ -205,13 +407,13 @@ The application includes Go unit tests for both HTTP handlers.
 
 Run all tests with:
 
-```powershell
+```bash
 go test ./...
 ```
 
 For verbose output:
 
-```powershell
+```bash
 go test -v ./...
 ```
 
@@ -226,15 +428,26 @@ The tests use Go's standard `net/http/httptest` package, so they test the handle
 
 ### CI Testing
 
-The same unit tests are executed automatically by GitHub Actions:
+Go unit tests are also executed automatically by GitHub Actions as part of pull request validation:
 
 ```text
 go test ./...
 ```
 
-This means every pull request is tested before changes can be merged, and the tests are also run as part of the release pipeline on `main`.
+The pull request validation job runs before changes are merged to `main`.
 
-The CI pipeline therefore validates the application before building and publishing the Docker image.
+In addition to the Go tests, the validation job also checks:
+
+- Terraform formatting
+- Terraform configuration validity
+- Kubernetes manifests
+- Docker image build
+- Container startup
+- `/health` endpoint response
+
+After the pull request is validated and merged, the release job builds and publishes the container image without repeating the full validation process.
+
+This separates validation from release and ensures that pull requests never publish container images.
 
 [Back to top](#hello-server)
 
@@ -246,42 +459,94 @@ The application is packaged as a Docker image using a multi-stage build.
 
 The `Dockerfile` contains two stages:
 
-1. **Builder stage** — uses `golang:1.25` to compile the Go application.
-2. **Runtime stage** — uses `debian:bookworm-slim` and contains only the compiled application binary.
+1. **Builder stage** — uses Go `1.25` to compile the application.
+2. **Runtime stage** — uses `debian:bookworm-slim` and contains only the compiled application binary and required runtime files.
+
+Both base images are pinned by digest while retaining their readable image tags.
 
 The structure is:
 
 ```dockerfile
-FROM golang:1.25 AS builder
+FROM golang:1.25@sha256:<pinned-digest> AS builder
 ...
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:<pinned-digest>
 ...
 COPY --from=builder /app/hello-server .
 ```
 
+Pinning the base images by digest ensures that builds use the expected image contents even if the upstream tag later changes.
+
 The builder image contains the Go compiler and build dependencies, but these are not included in the final runtime image.
 
-This keeps the final image smaller and reduces the number of unnecessary components in the production container.
+This keeps the final image smaller and reduces unnecessary components in the production container.
 
-The multi-stage build reduced the local image size from approximately `1.37 GB` to `126 MB`.
+The multi-stage build reduced the local runtime image size to approximately `126 MB`.
+
+### Non-Root Runtime User
+
+The runtime image creates a dedicated application user and runs the server without root privileges.
+
+The user name is supplied through the `APP_USER` Docker build argument.
+
+For example:
+
+```bash
+docker build \
+  --build-arg APP_USER=hello-server \
+  -t hello-server:local .
+```
+
+The container runs with UID `10001`.
+
+Running the application as a non-root user reduces the privileges available to the process inside the container.
+
+### Application Port
+
+The Docker image defines a default application port of `8080` through the `APP_PORT` environment variable.
+
+The application can be started using the default:
+
+```bash
+docker run --rm \
+  -p 8080:8080 \
+  hello-server:local
+```
+
+A different application port can also be supplied at runtime.
+
+For example:
+
+```bash
+docker run --rm \
+  -e APP_PORT=9090 \
+  -p 9090:9090 \
+  hello-server:local
+```
+
+The application will then listen on port `9090`.
 
 ### Build the Image Locally
 
 Build the image with:
 
-```powershell
-docker build -t hello-server:local .
+```bash
+docker build \
+  --build-arg APP_USER=hello-server \
+  -t hello-server:local .
 ```
 
 ### Run the Container
 
-Start the application in a container:
+Start the container:
 
-```powershell
-docker run --rm -p 8080:8080 hello-server:local
+```bash
+docker run --rm \
+  --name hello-server-local \
+  -p 8080:8080 \
+  hello-server:local
 ```
 
-The application is then available at:
+The application is available at:
 
 ```text
 http://localhost:8080
@@ -289,7 +554,7 @@ http://localhost:8080
 
 Test both endpoints:
 
-```powershell
+```bash
 curl http://localhost:8080/
 curl http://localhost:8080/health
 ```
@@ -301,23 +566,49 @@ Hello, World!
 healthy
 ```
 
-The `--rm` option automatically removes the container when it is stopped.
+The `--rm` option automatically removes the container after it stops.
+
+### Verify the Runtime User
+
+The container can be inspected to confirm that the application does not run as root:
+
+```bash
+docker run --rm hello-server:local id
+```
+
+The output should show UID `10001`.
 
 ### Docker Image Lifecycle
 
-The same `Dockerfile` is used both locally and in GitHub Actions.
+The same `Dockerfile` is used locally and by GitHub Actions.
 
-GitHub Actions invokes Docker to build the image during CI. The Docker builder stage performs the Go compilation, so the GitHub Actions runner does not need to compile the application separately for the Docker image.
+For pull requests, GitHub Actions:
 
-The resulting image is tested by starting it as a container and requesting `/health`.
+1. Builds the Docker image.
+2. Starts it as a temporary container.
+3. Requests the `/health` endpoint.
+4. Removes the temporary container after validation.
 
-Only after the validation steps succeed is the release image published to Docker Hub.
+Pull request images are not published.
+
+After validated changes are merged into `main`, the release job builds the image for the merge commit and publishes two tags to Docker Hub:
+
+```text
+<image-repository>:<git-commit-sha>
+<image-repository>:latest
+```
+
+The Git commit SHA provides an immutable reference to the exact released build.
+
+The `latest` tag provides a convenient reference to the most recently published release.
+
+For reproducible deployments, the immutable Git commit SHA tag is preferred.
 
 [Back to top](#hello-server)
 
 ## CI/CD
 
-The project uses GitHub Actions to automatically test, build, validate, and publish the Docker image.
+The project uses GitHub Actions to separate pull request validation from container image publishing.
 
 The workflow is defined in:
 
@@ -332,36 +623,58 @@ The workflow runs in two situations:
 - When a pull request targets `main`
 - When changes are pushed to `main`
 
-The two cases use the same validation process, but only successful pushes to `main` publish Docker images.
+The two triggers use separate jobs with different responsibilities.
 
-### Pull Request Workflow
+### Pull Request Validation
 
-For a pull request targeting `main`, GitHub Actions performs the following steps:
+Pull requests run the `validate` job.
+
+The validation job performs the following checks:
 
 1. Checks out the repository.
-2. Sets up Go `1.25`.
-3. Runs the Go unit tests.
-4. Builds the Docker image.
-5. Starts the Docker container.
-6. Tests the `/health` endpoint.
-7. Stops and removes the temporary test container.
+2. Sets up Terraform.
+3. Runs Terraform formatting checks.
+4. Initializes Terraform without a backend.
+5. Runs Terraform validation.
+6. Sets up Kubeconform.
+7. Validates the Kubernetes manifests.
+8. Sets up Go `1.25`.
+9. Runs the Go unit tests.
+10. Builds the Docker image.
+11. Starts the image as a temporary container.
+12. Tests the `/health` endpoint.
+13. Removes the temporary container.
 
-The image is **not pushed to Docker Hub** for pull requests.
+The validation job never publishes a Docker image.
 
-The workflow therefore validates changes before they are merged into `main`.
+This allows pull requests to fully validate the application and infrastructure configuration before changes are merged.
 
 ### Release Workflow
 
-When changes are pushed to `main`, the same validation steps are performed.
+When changes are pushed to `main`, the `release` job runs.
 
-After all validation steps succeed, the workflow:
+The release job intentionally does not repeat the pull request validation steps.
 
-1. Logs in to Docker Hub.
-2. Pushes the image using the Git commit SHA as the image tag.
-3. Tags the same image as `latest`.
-4. Pushes the `latest` tag to Docker Hub.
+Instead, it:
 
-This ensures that an image is only published after the application and container have passed the CI checks.
+1. Checks out the repository.
+2. Logs in to Docker Hub.
+3. Builds the Docker image for the exact Git commit.
+4. Tags the image using the Git commit SHA.
+5. Pushes the SHA-tagged image.
+6. Tags the same image as `latest`.
+7. Pushes the `latest` tag.
+
+The published image tags follow this pattern:
+
+```text
+<image-repository>:<git-commit-sha>
+<image-repository>:latest
+```
+
+The Git commit SHA provides an immutable image reference that can be traced directly back to the source revision.
+
+The `latest` tag points to the most recently published image.
 
 ### Workflow Overview
 
@@ -369,189 +682,228 @@ This ensures that an image is only published after the application and container
 Pull Request
      │
      ▼
-Checkout
+Validation Job
+     │
+     ├── Terraform Format
+     ├── Terraform Validate
+     ├── Kubernetes Validate
+     ├── Go Tests
+     ├── Docker Build
+     └── Container Health Check
      │
      ▼
-Go Unit Tests
+Merge to main
      │
      ▼
-Docker Build
+Release Job
      │
-     ▼
-Start Container
-     │
-     ▼
-GET /health
-     │
-     ▼
-Validation Complete
+     ├── Docker Hub Login
+     ├── Build Image
+     ├── Push <git-sha>
+     └── Push latest
 ```
 
-For a successful push to `main`, the workflow continues:
+### Terraform Validation
 
-```text
-Validation Complete
-     │
-     ▼
-Push <git-sha> image
-     │
-     ▼
-Tag same image as latest
-     │
-     ▼
-Push latest image
+Terraform is initialized in CI without configuring a backend:
+
+```bash
+terraform init -backend=false
 ```
+
+The workflow then runs:
+
+```bash
+terraform fmt -check -recursive
+terraform validate
+```
+
+Terraform deployment is not performed by GitHub Actions.
+
+Environment deployments are managed locally through the Terraform workspaces and helper scripts.
+
+### Kubernetes Validation
+
+Pull requests validate the Kubernetes manifests using Kubeconform:
+
+```bash
+kubeconform -strict -summary k8s/
+```
+
+This allows Kubernetes manifests to be validated in GitHub Actions without requiring a Kubernetes cluster.
+
+Local validation uses the Minikube API server instead through:
+
+```bash
+./scripts/validate.sh
+```
+
+### Container Validation
+
+The validation job builds a temporary Docker image using the configured application user:
+
+```bash
+docker build \
+  --build-arg APP_USER="$APP_USER" \
+  -t hello-server:test .
+```
+
+The image is then started as a temporary container using the configured application port:
+
+```bash
+docker run -d \
+  --name hello-server-test \
+  -e APP_PORT="$APP_PORT" \
+  -p "$APP_PORT:$APP_PORT" \
+  hello-server:test
+```
+
+GitHub Actions verifies the application's health endpoint:
+
+```bash
+curl \
+  --fail \
+  --retry 10 \
+  --retry-delay 1 \
+  --retry-connrefused \
+  "http://localhost:$APP_PORT/health"
+```
+
+The temporary container is removed after the validation step.
+
+### GitHub Repository Variables
+
+The workflow uses GitHub repository variables for non-sensitive configuration:
+
+- `IMAGE_REPOSITORY` — Docker image repository, for example `<dockerhub-username>/hello-server`
+- `APP_PORT` — application port used during container validation
+- `APP_USER` — non-root user created in the runtime Docker image
+
+These values are exposed to the workflow through environment variables.
 
 ### Docker Hub Credentials
 
-The workflow uses GitHub repository secrets for Docker Hub authentication:
+Docker Hub authentication uses GitHub repository secrets:
 
 - `DOCKERHUB_USERNAME` — Docker Hub username
 - `DOCKERHUB_TOKEN` — Docker Hub access token
 
-The credentials are only used by the publishing step when the workflow runs for a push to `main`.
+The credentials are only required by the release job and are not used during pull request validation.
 
-### Container Validation
+### Validation and Release Separation
 
-The Docker image is started temporarily during CI:
-
-```powershell
-docker run -d --name hello-server-test -p 8080:8080 <image>
-```
-
-The workflow then checks the application's health endpoint:
-
-```powershell
-curl --fail --retry 10 --retry-delay 1 --retry-connrefused http://localhost:8080/health
-```
-
-The `--fail` option causes the command to fail if the HTTP request returns an unsuccessful status code.
-
-The retry options give the application time to start before the healthcheck fails.
-
-After the test, the temporary container is removed:
-
-```powershell
-docker rm -f hello-server-test
-```
-
-The container name `hello-server-test` is only the name of the temporary running container. It is independent of the Docker image name and tag.
-
-### Why Test the Container in CI?
-
-The Go unit tests verify the application handlers directly.
-
-The container healthcheck verifies an additional part of the delivery process:
+The CI/CD design follows two distinct responsibilities:
 
 ```text
-Go source code
-     │
-     ▼
-Compiled application
-     │
-     ▼
-Docker image
-     │
-     ▼
-Running container
-     │
-     ▼
-HTTP /health
+Pull Request
+    │
+    └── Validate changes
+            │
+            └── No image publishing
+
+main
+    │
+    └── Release validated changes
+            │
+            └── Publish SHA + latest images
 ```
 
-This means the pipeline verifies not only that the Go code works, but also that the application can be successfully packaged and started as a Docker container before the image is released.
+This avoids publishing container images from pull requests and avoids repeating the full validation pipeline after validated changes are merged.
 
 [Back to top](#hello-server)
 
 ## Docker Hub
 
-Docker Hub is used as the container image registry for the project.
+Docker Hub is used as the container image registry for released application images.
 
-The GitHub Actions workflow publishes the validated Docker image to the Docker Hub repository associated with the configured `DOCKERHUB_USERNAME` GitHub secret.
-
-The repository name is constructed as:
+The target repository is configured through the GitHub repository variable:
 
 ```text
-<DOCKERHUB_USERNAME>/hello-server
+IMAGE_REPOSITORY
 ```
 
-For example:
+The value should contain the complete Docker Hub repository name:
 
 ```text
-secretninjauser/hello-server
+<dockerhub-username>/hello-server
 ```
 
-This allows the workflow to be reused with a different Docker Hub account by changing the `DOCKERHUB_USERNAME` secret.
+The GitHub Actions workflow uses this value when tagging and publishing release images.
 
-The Kubernetes deployment can then pull the released image from Docker Hub.
+Docker Hub authentication is handled separately through the GitHub repository secrets:
+
+```text
+DOCKERHUB_USERNAME
+DOCKERHUB_TOKEN
+```
+
+This keeps the image repository configuration separate from authentication credentials.
 
 ### Image Tags
 
-The CI/CD pipeline publishes each successful build on `main` using two tags:
+Each release from `main` publishes two tags:
 
-- `<git-commit-sha>` — immutable version tag
-- `latest` — mutable tag pointing to the most recent successful release
+- `<git-commit-sha>` — immutable tag identifying the exact source revision
+- `latest` — mutable tag identifying the most recently published release
 
-For example:
+The resulting image references follow this pattern:
 
 ```text
-secretninjauser/hello-server:<git-commit-sha>
-secretninjauser/hello-server:latest
+<image-repository>:<git-commit-sha>
+<image-repository>:latest
 ```
 
-The Git commit SHA is provided by GitHub Actions through:
+The Git commit SHA is supplied by GitHub Actions through:
 
 ```text
 ${{ github.sha }}
 ```
 
-This creates a direct relationship between a Docker image and the Git commit that produced it.
+This creates a direct relationship between the source commit and the released container image.
 
 ### Immutable Version Tags
 
-The commit SHA tag identifies a specific application build.
+The Git commit SHA identifies a specific application build.
 
 For example:
 
 ```text
-secretninjauser/hello-server:abc123...
+<image-repository>:<git-commit-sha>
 ```
 
-Once published, this tag identifies that particular image version.
+Once published, this reference can be used to deploy the exact image associated with that source revision.
 
-This is useful for Kubernetes deployments because a specific application version can be selected instead of relying on the changing `latest` tag.
+Immutable tags are preferred for reproducible deployments because the referenced image version does not change when a newer release is published.
 
 ### The `latest` Tag
 
-The `latest` tag is updated whenever a successful build is published from `main`.
-
-For example:
+The `latest` tag is updated whenever a new release is published from `main`.
 
 ```text
-secretninjauser/hello-server:latest
+<image-repository>:latest
 ```
 
-It provides a convenient way to refer to the newest release, but it should not be treated as an immutable version.
+It provides a convenient reference to the most recently released image.
+
+Because `latest` can point to a different image after each release, it should not be treated as an immutable deployment version.
 
 The project therefore supports both:
 
 ```text
-latest
+<image-repository>:latest
 ```
 
-for convenience and:
+for convenience, and:
 
 ```text
-<git-commit-sha>
+<image-repository>:<git-commit-sha>
 ```
 
 for reproducible deployments.
 
 ### Image Identity
 
-The SHA-tagged image and `latest` image published by the same workflow point to the same Docker image digest.
-
-The digest identifies the actual image contents independently of the tag.
+The SHA-tagged image and the `latest` tag published by the same release refer to the same Docker image.
 
 Conceptually:
 
@@ -566,63 +918,109 @@ Docker image
     └── :latest
 ```
 
-Both tags can therefore refer to the same image while providing different ways to reference it.
+The immutable tag identifies the exact release, while `latest` provides a convenient moving reference.
 
 ### Using a Published Image
 
-A published image can be pulled and run independently of the source repository:
+Set the repository and image version to use:
 
-```powershell
-docker pull secretninjauser/hello-server:<git-commit-sha>
+```bash
+IMAGE_REPOSITORY="<dockerhub-username>/hello-server"
+IMAGE_TAG="<git-commit-sha>"
 ```
 
-Run it with:
+Pull the released image:
 
-```powershell
-docker run --rm -p 8080:8080 secretninjauser/hello-server:<git-commit-sha>
+```bash
+docker pull "${IMAGE_REPOSITORY}:${IMAGE_TAG}"
 ```
 
-The application can then be tested with:
+Run the image:
 
-```powershell
+```bash
+docker run --rm \
+  -p 8080:8080 \
+  "${IMAGE_REPOSITORY}:${IMAGE_TAG}"
+```
+
+Test the application:
+
+```bash
 curl http://localhost:8080/
 curl http://localhost:8080/health
 ```
 
-This demonstrates that the released Docker image is a self-contained application artifact that can be deployed without rebuilding the source code.
+Expected responses:
+
+```text
+Hello, World!
+healthy
+```
+
+This demonstrates that the released Docker image is a self-contained application artifact that can be run without rebuilding the source code.
+
+### Kubernetes and Terraform Usage
+
+The same image repository and version are supplied to Terraform through:
+
+```text
+image_repository
+image_tag
+```
+
+Terraform then configures the Kubernetes Deployment to run the selected released image.
+
+For reproducible deployments, an immutable Git commit SHA should be supplied as `image_tag`.
 
 [Back to top](#hello-server)
 
 ## Kubernetes
 
-Kubernetes is used to run and manage the released Docker image.
+Kubernetes is used to run, expose, scale, and manage the released application container.
 
 The project uses Minikube as the local Kubernetes cluster.
 
-The Kubernetes configuration is stored in:
+The standalone Kubernetes manifests are stored in:
 
 ```text
 k8s/
 ├── deployment.yaml
-└── service.yaml
+├── service.yaml
+├── hpa.yaml
+├── pdb.yaml
+└── serviceaccount.yaml
 ```
 
-Terraform uses these files to manage the Kubernetes resources.
+These files are valid Kubernetes YAML manifests and can be validated independently of Terraform.
 
-### Kubernetes Deployment
+Terraform reads the same manifests and applies environment-specific configuration when deploying the application.
+
+### Kubernetes Resources
+
+The application uses the following Kubernetes resources:
+
+- **Deployment** — manages the application Pods and rolling updates
+- **Service** — exposes the application inside and outside the cluster
+- **HorizontalPodAutoscaler** — scales the number of application replicas based on CPU utilization
+- **PodDisruptionBudget** — maintains application availability during voluntary disruptions
+- **ServiceAccount** — provides a dedicated Kubernetes identity for the application Pods
+- **Namespace** — isolates each deployed environment
+
+### Deployment
 
 The Kubernetes `Deployment` defines the desired state of the application.
 
-It specifies:
+It configures:
 
-- The application name
-- The number of replicas
-- The Docker image to run
-- The container port
-- The readiness probe
-- The liveness probe
-
-The Deployment manages the application's Pod and ensures that the desired number of instances are running.
+- Container image
+- Application port
+- Environment variables
+- Resource requests and limits
+- Readiness probe
+- Liveness probe
+- Rolling update strategy
+- Container security settings
+- Dedicated ServiceAccount
 
 Conceptually:
 
@@ -630,42 +1028,63 @@ Conceptually:
 Deployment
     │
     ▼
-  Pod
+Application Pods
     │
     ▼
 hello-server container
 ```
 
-The application container listens on port `8080`.
+Terraform supplies environment-specific values such as the image repository, image tag, application port, and namespace.
 
-### Pod
+### Container Image
 
-A Pod is the Kubernetes execution unit that runs the Docker container.
+The Deployment runs the Docker image published by the release workflow.
 
-The Pod uses the Docker image published to Docker Hub.
-
-For example:
+The image follows this pattern:
 
 ```text
-secretninjauser/hello-server:<git-commit-sha>
+<image-repository>:<image-tag>
 ```
 
-Kubernetes pulls the image from Docker Hub and starts the application inside the Pod.
+For reproducible deployments, `<image-tag>` should be an immutable Git commit SHA:
 
-Kubernetes does not compile the Go application or build the Docker image. Those steps happen earlier in the CI/CD process.
+```text
+<image-repository>:<git-commit-sha>
+```
+
+The Deployment uses:
+
+```yaml
+imagePullPolicy: Always
+```
+
+This ensures Kubernetes checks the container registry when starting application Pods.
+
+### Application Port
+
+The application port is configurable.
+
+Terraform supplies the configured `app_port` value to:
+
+- The container's `APP_PORT` environment variable
+- The container port
+- The Service target port
+- The readiness probe
+- The liveness probe
+
+This keeps the application and Kubernetes networking configuration aligned.
 
 ### Service
 
-The Kubernetes `Service` provides stable network access to the application Pod.
+The Kubernetes `Service` provides a stable network endpoint for the application Pods.
 
-The Service selects Pods using the application label:
+The Service uses:
 
-```yaml
-selector:
-  app: hello-server
+```text
+type: NodePort
 ```
 
-It exposes port `80` and forwards requests to the application's container port `8080`.
+and exposes the application through service port `80`.
 
 Conceptually:
 
@@ -676,399 +1095,33 @@ Client
 Service :80
   │
   ▼
-Pod :8080
-  │
-  ▼
-Go HTTP server
+Application Pod :<app_port>
 ```
 
-The Service is useful because Pods can be recreated or replaced while the Service continues to provide a stable endpoint.
+When using Minikube, the service can be accessed with:
 
-### NodePort
-
-The Service uses the `NodePort` type:
-
-```yaml
-type: NodePort
+```bash
+minikube service hello-server \
+  --namespace <namespace>
 ```
 
-This allows the application to be accessed from outside the Kubernetes cluster.
-
-With Minikube, the service can be accessed using:
-
-```powershell
-minikube service hello-server --url
-```
-
-The command returns an accessible URL for the Service.
+The exact namespace depends on the deployed environment.
 
 ### Health Probes
 
 Kubernetes uses the application's `/health` endpoint for both readiness and liveness checks.
 
+The readiness probe determines whether a Pod is ready to receive traffic.
+
+The liveness probe determines whether the application is still healthy and should continue running.
+
+Both probes request:
+
 ```text
 /health
-    │
-    ├── Readiness Probe
-    └── Liveness Probe
 ```
 
-#### Readiness Probe
-
-The readiness probe determines whether the application is ready to receive traffic.
-
-If the readiness check fails, Kubernetes does not send Service traffic to that Pod.
-
-The probe uses:
-
-```yaml
-readinessProbe:
-  httpGet:
-    path: /health
-    port: 8080
-```
-
-#### Liveness Probe
-
-The liveness probe determines whether the application is still functioning.
-
-If the liveness check repeatedly fails, Kubernetes can restart the container.
-
-The probe uses:
-
-```yaml
-livenessProbe:
-  httpGet:
-    path: /health
-    port: 8080
-```
-
-Both probes use the same endpoint, but they answer different Kubernetes questions:
-
-```text
-Readiness → "Can this Pod receive traffic?"
-
-Liveness  → "Is this application still alive?"
-```
-
-### Image Version Selection
-
-The Deployment is defined as a Terraform template rather than a static YAML file.
-
-The image is specified using the Terraform `image_tag` variable:
-
-```yaml
-image: secretninjauser/hello-server:${image_tag}
-```
-
-The default value is:
-
-```text
-latest
-```
-
-A specific Git commit can be deployed by providing its SHA:
-
-```powershell
-terraform apply -var="image_tag=<git-commit-sha>"
-```
-
-This allows Kubernetes to run an explicitly selected application version.
-
-For example:
-
-```text
-Terraform
-    │
-    │ image_tag = abc123...
-    ▼
-Deployment
-    │
-    ▼
-secretninjauser/hello-server:abc123...
-    │
-    ▼
-Pod
-```
-
-This is preferable to depending exclusively on `latest`, because the deployed application version can be traced back to a specific Git commit.
-
-### Kubernetes Responsibility
-
-Kubernetes is responsible for running and maintaining the application after the Docker image has been released.
-
-It does not:
-
-- Compile the Go application
-- Build the Docker image
-- Run the Go unit tests
-- Publish images to Docker Hub
-
-Those responsibilities belong to the earlier stages of the delivery pipeline.
-
-Kubernetes is responsible for:
-
-- Running the container
-- Maintaining the desired number of Pods
-- Checking application health
-- Managing readiness
-- Exposing the application through a Service
-- Restarting unhealthy containers when necessary
-
-The overall relationship is:
-
-```text
-Docker Hub
-    │
-    │ pull image
-    ▼
-Kubernetes Deployment
-    │
-    ▼
-Pod
-    │
-    ├── Readiness → /health
-    └── Liveness  → /health
-    │
-    ▼
-Service
-    │
-    ▼
-Application
-```
-
-[Back to top](#hello-server)
-
-## Minikube
-
-Minikube is used to provide a local Kubernetes cluster for development and testing.
-
-The project uses the Docker driver, which allows Minikube to run the Kubernetes cluster using Docker Desktop.
-
-### Prerequisites
-
-The following tools are required:
-
-- Docker Desktop
-- Minikube
-- kubectl
-- Terraform
-
-Verify the installations:
-
-```powershell
-docker --version
-minikube version
-kubectl version --client
-terraform version
-```
-
-### Start Minikube
-
-Start the cluster using the Docker driver:
-
-```powershell
-minikube start --driver=docker
-```
-
-The Docker driver can also be configured as the default:
-
-```powershell
-minikube config set driver docker
-```
-
-After configuring the driver, Minikube can be started with:
-
-```powershell
-minikube start
-```
-
-Verify that the cluster is running:
-
-```powershell
-minikube status
-```
-
-Verify that `kubectl` is connected to the Minikube context:
-
-```powershell
-kubectl config current-context
-```
-
-The expected context is:
-
-```text
-minikube
-```
-
-### Deploy the Application
-
-The Kubernetes resources are managed through Terraform.
-
-From the Terraform directory:
-
-```powershell
-cd terraform
-```
-
-Initialize Terraform:
-
-```powershell
-terraform init
-```
-
-Review the planned changes:
-
-```powershell
-terraform plan
-```
-
-Deploy the application:
-
-```powershell
-terraform apply
-```
-
-Terraform creates or updates the Kubernetes Deployment and Service defined by the project.
-
-### Verify the Pod
-
-Check the Pods:
-
-```powershell
-kubectl get pods
-```
-
-A successfully deployed application should show the Pod as:
-
-```text
-1/1 Running
-```
-
-The Pod should also become `Ready` after the readiness probe succeeds.
-
-More detailed information can be displayed with:
-
-```powershell
-kubectl describe pod <pod-name>
-```
-
-### Verify the Service
-
-List the Kubernetes Services:
-
-```powershell
-kubectl get services
-```
-
-The application Service is named:
-
-```text
-hello-server
-```
-
-With Minikube, retrieve an accessible URL using:
-
-```powershell
-minikube service hello-server --url
-```
-
-The returned URL can be used to test the application.
-
-For example:
-
-```powershell
-curl http://<minikube-service-url>/
-curl http://<minikube-service-url>/health
-```
-
-Expected responses:
-
-```text
-Hello, World!
-healthy
-```
-
-### Useful Minikube Commands
-
-Check the cluster status:
-
-```powershell
-minikube status
-```
-
-Start the cluster:
-
-```powershell
-minikube start
-```
-
-Stop the cluster:
-
-```powershell
-minikube stop
-```
-
-Open the Kubernetes dashboard:
-
-```powershell
-minikube dashboard
-```
-
-List Kubernetes nodes:
-
-```powershell
-kubectl get nodes
-```
-
-List Pods:
-
-```powershell
-kubectl get pods
-```
-
-List Services:
-
-```powershell
-kubectl get services
-```
-
-### Minikube and Docker
-
-Minikube is the local Kubernetes environment used to run the application.
-
-Docker Desktop provides the container runtime used by the Minikube Docker driver.
-
-The released application image itself is stored in Docker Hub.
-
-The resulting flow is:
-
-```text
-Docker Hub
-    │
-    │ pull image
-    ▼
-Minikube Kubernetes Cluster
-    │
-    ▼
-Deployment
-    │
-    ▼
-Pod
-    │
-    ▼
-hello-server container
-```
-
-This makes Minikube a local environment for testing the same type of Kubernetes deployment that would be used with a remote Kubernetes cluster.
-
-[Back to top](#hello-server)
-
-## Health Checks
-
-The application provides a dedicated `/health` endpoint that is used as a common health signal throughout the delivery and deployment process.
-
-The endpoint returns:
+A healthy application returns:
 
 ```text
 healthy
@@ -1076,496 +1129,1308 @@ healthy
 
 with HTTP status `200 OK`.
 
-### CI Health Check
+### Resource Management
 
-GitHub Actions starts the Docker image as a temporary container and requests:
+The Deployment defines CPU and memory requests and limits for the application container.
+
+Configured resources are:
+
+```text
+Requests:
+  CPU:     50m
+  Memory:  32Mi
+
+Limits:
+  CPU:     250m
+  Memory:  128Mi
+```
+
+Resource requests allow Kubernetes to make scheduling decisions.
+
+Resource limits prevent an application container from consuming unlimited cluster resources.
+
+The CPU request is also used by the Horizontal Pod Autoscaler when calculating CPU utilization.
+
+### Horizontal Pod Autoscaler
+
+The project uses a Horizontal Pod Autoscaler (`HPA`) to scale the application based on CPU utilization.
+
+The target CPU utilization is:
+
+```text
+50%
+```
+
+The minimum and maximum replica counts are supplied by Terraform through:
+
+```text
+min_replicas
+max_replicas
+```
+
+This allows different environments to use different scaling limits.
+
+For example:
+
+```text
+Environment    Minimum    Maximum
+dev            1          2
+qa             1          2
+prod           2          5
+```
+
+The HPA requires Kubernetes Metrics Server.
+
+The project setup script ensures that the Minikube Metrics Server addon is enabled:
+
+```bash
+./scripts/setup-minikube.sh
+```
+
+Current autoscaling status can be viewed with:
+
+```bash
+kubectl get hpa -n <namespace>
+```
+
+or:
+
+```bash
+./scripts/status.sh <environment>
+```
+
+### HPA Load Testing
+
+The project includes a helper script for generating application load:
+
+```bash
+./scripts/start-load.sh
+```
+
+The HPA can then be monitored with:
+
+```bash
+kubectl get hpa -n hello-server -w
+```
+
+Stop the load generator with:
+
+```bash
+./scripts/stop-load.sh
+```
+
+The load test can be used to verify that the HPA increases the number of replicas when CPU utilization exceeds the configured target.
+
+### Pod Disruption Budget
+
+The project defines a `PodDisruptionBudget` to protect application availability during voluntary Kubernetes disruptions.
+
+The minimum number of available Pods is based on:
+
+```text
+min_replicas
+```
+
+This connects the disruption policy to the minimum replica configuration of the selected environment.
+
+### Rolling Updates
+
+The Deployment uses a rolling update strategy.
+
+The configuration allows:
+
+```text
+maxUnavailable: 0
+maxSurge: 1
+```
+
+This allows Kubernetes to start a replacement Pod before removing an existing healthy Pod.
+
+Combined with readiness probes and the PodDisruptionBudget, this reduces application disruption during deployments.
+
+### ServiceAccount
+
+Application Pods use a dedicated Kubernetes ServiceAccount:
+
+```text
+hello-server
+```
+
+The ServiceAccount is created specifically for the application instead of relying on the namespace's default ServiceAccount.
+
+Automatic ServiceAccount token mounting is disabled because the application does not need to communicate with the Kubernetes API.
+
+This is configured at both the ServiceAccount and Pod level.
+
+### Container Security
+
+The application container uses several security restrictions.
+
+The container:
+
+- Runs as a non-root user
+- Uses UID `10001`
+- Does not allow privilege escalation
+- Drops all Linux capabilities
+- Uses the `RuntimeDefault` seccomp profile
+- Does not automatically mount a Kubernetes ServiceAccount token
+
+These settings reduce the privileges available to the application if the container is compromised.
+
+### Namespaces
+
+Terraform deploys each environment into a separate Kubernetes namespace.
+
+The environment configuration uses:
+
+```text
+dev  → hello-server-dev
+qa   → hello-server-qa
+prod → hello-server-prod
+```
+
+This allows multiple environments to run simultaneously in the same Minikube cluster without conflicting with each other.
+
+A standalone/default deployment can use:
+
+```text
+hello-server
+```
+
+### Standalone Manifest Validation
+
+The Kubernetes manifests can be validated directly against the local Minikube API server:
+
+```bash
+kubectl apply --dry-run=server -f k8s/
+```
+
+The project validation script performs this check automatically:
+
+```bash
+./scripts/validate.sh
+```
+
+GitHub Actions uses Kubeconform instead because the CI runner does not have a Minikube cluster.
+
+### Inspecting Kubernetes Resources
+
+Check the resources for an environment with:
+
+```bash
+./scripts/status.sh <environment>
+```
+
+Supported environment values are:
+
+```text
+dev
+qa
+prod
+```
+
+For example:
+
+```bash
+./scripts/status.sh dev
+```
+
+Individual resources can also be inspected directly:
+
+```bash
+kubectl get pods -n <namespace>
+kubectl get services -n <namespace>
+kubectl get deployments -n <namespace>
+kubectl get hpa -n <namespace>
+kubectl get pdb -n <namespace>
+kubectl top pods -n <namespace>
+```
+
+[Back to top](#hello-server)
+
+## Minikube
+
+Minikube provides the local Kubernetes cluster used to deploy and test the application.
+
+The project uses the Docker driver and allocates `4096 MB` of memory to the cluster.
+
+### Start Minikube
+
+The recommended way to prepare the local cluster is:
+
+```bash
+./scripts/setup-minikube.sh
+```
+
+The setup script:
+
+1. Verifies that `minikube`, `kubectl`, and `docker` are available.
+2. Checks whether Minikube is already running.
+3. Starts Minikube with the Docker driver when necessary.
+4. Allocates `4096 MB` of memory.
+5. Ensures the Metrics Server addon is enabled.
+6. Waits for the Kubernetes node to become ready.
+
+The script is idempotent and can be run again against an existing cluster.
+
+### Manual Cluster Setup
+
+The equivalent Minikube command is:
+
+```bash
+minikube start \
+  --driver=docker \
+  --memory=4096
+```
+
+The Docker engine must be running before starting Minikube with the Docker driver.
+
+### Check Cluster Status
+
+Check Minikube:
+
+```bash
+minikube status
+```
+
+Check the Kubernetes node:
+
+```bash
+kubectl get nodes
+```
+
+A healthy cluster should report the node as:
+
+```text
+Ready
+```
+
+### Metrics Server
+
+The project uses Kubernetes Metrics Server to provide CPU usage data for the Horizontal Pod Autoscaler.
+
+The setup script enables it automatically when necessary.
+
+It can also be enabled manually:
+
+```bash
+minikube addons enable metrics-server
+```
+
+Check the addon status with:
+
+```bash
+minikube addons list
+```
+
+After Metrics Server becomes ready, Pod resource usage can be viewed with:
+
+```bash
+kubectl top pods -A
+```
+
+### Accessing the Application
+
+After an environment has been deployed, determine its namespace:
+
+```text
+dev  → hello-server-dev
+qa   → hello-server-qa
+prod → hello-server-prod
+```
+
+The application Service can then be accessed through Minikube.
+
+For example, for development:
+
+```bash
+minikube service hello-server \
+  --namespace hello-server-dev
+```
+
+To request only the service URL:
+
+```bash
+minikube service hello-server \
+  --namespace hello-server-dev \
+  --url
+```
+
+When Minikube uses the Docker driver, the service command may create a local tunnel to the Kubernetes Service.
+
+Keep the terminal running while using the generated URL.
+
+### Validate the Cluster
+
+The project validation script checks that Minikube is running before validating the Kubernetes manifests against the cluster API:
+
+```bash
+./scripts/validate.sh
+```
+
+The equivalent Kubernetes validation command is:
+
+```bash
+kubectl apply \
+  --dry-run=server \
+  -f k8s/
+```
+
+This validates the manifests without creating or modifying the application resources.
+
+### View Deployed Resources
+
+Use the project status script to inspect a deployed environment:
+
+```bash
+./scripts/status.sh <environment>
+```
+
+For example:
+
+```bash
+./scripts/status.sh dev
+```
+
+The script displays:
+
+- Pods
+- Services
+- Deployments
+- Horizontal Pod Autoscaler
+- PodDisruptionBudget
+- Pod resource usage
+
+### Stop Minikube
+
+Stop the local cluster without deleting it:
+
+```bash
+minikube stop
+```
+
+The cluster can later be started again with:
+
+```bash
+./scripts/setup-minikube.sh
+```
+
+### Delete the Cluster
+
+To completely remove the local Minikube cluster:
+
+```bash
+minikube delete
+```
+
+Deleting the cluster removes all Kubernetes resources stored inside it.
+
+Terraform environment resources should normally be destroyed before deleting the cluster so that Terraform state remains consistent with the infrastructure lifecycle.
+
+[Back to top](#hello-server)
+
+## Health Checks
+
+The application exposes a dedicated health endpoint:
 
 ```text
 GET /health
 ```
 
-The workflow uses:
+A healthy application returns:
 
-```powershell
-curl --fail --retry 10 --retry-delay 1 --retry-connrefused http://localhost:8080/health
+```text
+healthy
 ```
 
-This verifies that:
+with HTTP status:
 
-- The Docker image starts successfully.
-- The application starts successfully inside the container.
-- The HTTP server is listening on port `8080`.
-- The `/health` endpoint responds successfully.
+```text
+200 OK
+```
 
-The Docker image is only published after this validation succeeds.
+The same endpoint is used throughout the project to verify that the application is running correctly.
+
+### Local Health Check
+
+When the application is running locally on the default port:
+
+```bash
+curl http://localhost:8080/health
+```
+
+Expected response:
+
+```text
+healthy
+```
+
+If a custom application port is used, reference that port instead.
+
+For example:
+
+```bash
+APP_PORT=9090
+curl "http://localhost:${APP_PORT}/health"
+```
+
+### Docker Health Validation
+
+GitHub Actions starts the built Docker image as a temporary container and checks the health endpoint.
+
+The validation request uses the configured application port:
+
+```bash
+curl \
+  --fail \
+  --retry 10 \
+  --retry-delay 1 \
+  --retry-connrefused \
+  "http://localhost:${APP_PORT}/health"
+```
+
+The `--fail` option causes the command to fail when the HTTP request returns an unsuccessful status code.
+
+The retry options allow the application time to start before the validation step fails.
 
 ### Kubernetes Readiness Probe
 
-Kubernetes uses `/health` as the readiness probe.
+Kubernetes uses the `/health` endpoint as the readiness probe.
 
-```yaml
-readinessProbe:
-  httpGet:
-    path: /health
-    port: 8080
+The readiness probe determines whether a Pod is ready to receive traffic.
+
+If the readiness probe fails, Kubernetes removes the Pod from Service endpoints until the application becomes healthy again.
+
+The configured readiness probe uses:
+
+```text
+Path:          /health
+Initial delay: 2 seconds
+Period:        5 seconds
 ```
-
-The readiness probe answers:
-
-> Is this Pod ready to receive traffic?
-
-When the probe succeeds, Kubernetes considers the Pod ready and allows the Service to send traffic to it.
-
-If the probe fails, Kubernetes removes the Pod from the Service's available endpoints until the application becomes ready again.
 
 ### Kubernetes Liveness Probe
 
-Kubernetes also uses `/health` as the liveness probe.
+Kubernetes also uses the `/health` endpoint as the liveness probe.
 
-```yaml
-livenessProbe:
-  httpGet:
-    path: /health
-    port: 8080
-```
+The liveness probe determines whether the application is still functioning correctly.
 
-The liveness probe answers:
+If the liveness probe repeatedly fails, Kubernetes restarts the container.
 
-> Is this application still running correctly?
-
-If the application repeatedly fails the liveness check, Kubernetes can restart the container.
-
-### Why Use the Same Endpoint?
-
-Using the same simple endpoint provides a consistent health signal across different stages:
+The configured liveness probe uses:
 
 ```text
-                    /health
-                       │
-          ┌────────────┼────────────┐
-          │            │            │
-          ▼            ▼            ▼
-     GitHub Actions  Readiness   Liveness
-          │            │            │
-          ▼            ▼            ▼
-     Container OK   Ready for    Application
-                    traffic       alive
+Path:          /health
+Initial delay: 5 seconds
+Period:        10 seconds
 ```
 
-The purpose of the check depends on where it is used:
+### Readiness vs Liveness
 
-| System | Purpose |
-|---|---|
-| GitHub Actions | Verify the container starts and responds |
-| Kubernetes readiness | Determine whether the Pod can receive traffic |
-| Kubernetes liveness | Detect an unhealthy application |
+Although both probes use the same endpoint, they serve different purposes.
 
-This gives the project a single, application-level health endpoint that can be reused by different parts of the infrastructure.
+```text
+Readiness
+    │
+    └── Should this Pod receive traffic?
+
+Liveness
+    │
+    └── Should this container keep running?
+```
+
+A failed readiness probe temporarily removes the Pod from traffic.
+
+A failed liveness probe can cause Kubernetes to restart the container.
+
+### Shared Health Signal
+
+The `/health` endpoint provides one consistent health signal across the delivery workflow:
+
+```text
+Go application
+      │
+      ▼
+   /health
+      │
+      ├── Local testing
+      ├── Docker CI validation
+      ├── Kubernetes readiness probe
+      └── Kubernetes liveness probe
+```
+
+Using the same endpoint throughout the project keeps application health validation consistent across local development, CI, containers, and Kubernetes.
 
 [Back to top](#hello-server)
 
 ## Terraform
 
-Terraform is used to manage the Kubernetes resources defined by the project.
+Terraform manages the Kubernetes resources used to deploy the application.
 
-The Terraform configuration is located in:
+The Terraform configuration is stored in:
 
 ```text
 terraform/
+├── .gitignore
+├── .terraform.lock.hcl
 ├── main.tf
 ├── variables.tf
-└── .terraform.lock.hcl
+│
+└── environments/
+    ├── dev.tfvars
+    ├── qa.tfvars
+    └── prod.tfvars
 ```
 
-Terraform uses the Kubernetes provider to communicate with the Kubernetes cluster.
+Terraform does not duplicate the Kubernetes resource definitions.
+
+Instead, it reads the standalone YAML manifests from the `k8s/` directory and applies environment-specific configuration when deploying them.
+
+### Terraform Version
+
+The project uses Terraform `1.13.x`.
+
+The Terraform configuration constrains the required Terraform version so that incompatible versions are not used accidentally.
+
+Check the installed version with:
+
+```bash
+terraform version
+```
 
 ### Kubernetes Provider
 
-The provider is configured to use the local Kubernetes configuration and the `minikube` context:
+Terraform uses the HashiCorp Kubernetes provider.
+
+The project constrains the provider to the `2.38.x` release series.
+
+The provider is installed automatically when running:
+
+```bash
+terraform init
+```
+
+It is therefore not a separate local prerequisite.
+
+The exact selected provider version is recorded in:
+
+```text
+terraform/.terraform.lock.hcl
+```
+
+The lock file is committed to Git so that Terraform installations use the same provider version.
+
+### Managed Kubernetes Resources
+
+Terraform manages the following resources:
+
+```text
+Namespace
+    │
+    ├── ServiceAccount
+    ├── Deployment
+    ├── Service
+    ├── HorizontalPodAutoscaler
+    └── PodDisruptionBudget
+```
+
+The namespace is created first.
+
+The application resources are then deployed into the environment-specific namespace.
+
+The Deployment also depends on the dedicated ServiceAccount.
+
+### Standalone Kubernetes Manifests
+
+The Kubernetes manifests remain valid standalone YAML files:
+
+```text
+k8s/
+├── deployment.yaml
+├── service.yaml
+├── hpa.yaml
+├── pdb.yaml
+└── serviceaccount.yaml
+```
+
+Terraform loads these files using:
 
 ```hcl
-provider "kubernetes" {
-  config_path    = "~/.kube/config"
-  config_context = "minikube"
-}
+yamldecode(file(...))
 ```
 
-This allows Terraform to connect to the same Kubernetes cluster used by `kubectl`.
+This allows the Kubernetes configuration to be used independently while still allowing Terraform to manage the deployed resources.
 
-The currently selected Kubernetes context can be checked with:
+For example, the manifests can be validated directly with:
 
-```powershell
-kubectl config current-context
+```bash
+kubectl apply --dry-run=server -f k8s/
 ```
 
-The expected context is:
+without requiring Terraform to render templates first.
+
+### Environment-Specific Overrides
+
+Terraform uses `merge()` to apply values that differ between environments.
+
+The shared Kubernetes YAML remains the baseline configuration, while Terraform supplies values such as:
+
+- Kubernetes namespace
+- Docker image repository
+- Docker image tag
+- Application port
+- Minimum replica count
+- Maximum replica count
+
+For the Deployment, Terraform preserves the existing container configuration and overrides only the required environment-specific fields.
+
+This allows settings such as health probes, resource limits, and container security configuration to remain defined in the shared Kubernetes manifest.
+
+### Terraform Variables
+
+The deployment accepts the following variables:
+
+| Variable | Purpose |
+|---|---|
+| `image_repository` | Docker repository containing the application image |
+| `image_tag` | Docker image version to deploy |
+| `app_port` | Port used by the application container |
+| `namespace` | Kubernetes namespace for the environment |
+| `min_replicas` | Minimum application replica count |
+| `max_replicas` | Maximum application replica count |
+
+Terraform validates these values before deployment.
+
+The configuration requires:
 
 ```text
-minikube
+image_repository → must not be empty
+image_tag        → must not be empty
+app_port         → must be between 1 and 65535
+namespace        → must not be empty
+min_replicas     → must be at least 1
+max_replicas     → must be greater than or equal to min_replicas
 ```
 
-### Managed Resources
+This prevents several invalid configurations from reaching Kubernetes.
 
-Terraform manages two Kubernetes resources:
+### Environment Configuration
 
-- `kubernetes_manifest.deployment`
-- `kubernetes_manifest.service`
-
-The Deployment and Service definitions are based on the files in the `k8s` directory.
-
-Terraform therefore acts as the infrastructure management layer between the Kubernetes configuration and the actual cluster.
+Environment-specific values are stored in:
 
 ```text
-Terraform configuration
-        │
-        ▼
-Kubernetes Provider
-        │
-        ▼
-Minikube Kubernetes API
-        │
-        ├── Deployment
-        └── Service
+terraform/environments/
+├── dev.tfvars
+├── qa.tfvars
+└── prod.tfvars
 ```
 
-### Kubernetes Deployment Template
+Each environment defines its own deployment configuration.
 
-The Deployment is stored as a Terraform template:
+A variable file follows this structure:
+
+```hcl
+image_repository = "<image-repository>"
+image_tag        = "<image-tag>"
+app_port         = <application-port>
+namespace        = "<namespace>"
+min_replicas     = <minimum-replicas>
+max_replicas     = <maximum-replicas>
+```
+
+For example, a development configuration could use:
+
+```hcl
+image_repository = "<image-repository>"
+image_tag        = "<git-commit-sha>"
+app_port         = 9090
+namespace        = "hello-server-dev"
+min_replicas     = 1
+max_replicas     = 2
+```
+
+The repository and image version should be changed to match the image being deployed.
+
+### Environment Model
+
+The project supports three environments:
 
 ```text
-k8s/deployment.yaml
+Environment    Workspace    Namespace
+dev            dev          hello-server-dev
+qa             qa           hello-server-qa
+prod           prod         hello-server-prod
 ```
 
-The Docker image is defined using the `image_tag` template variable:
-
-```yaml
-image: secretninjauser/hello-server:${image_tag}
-```
-
-Terraform supplies the value for `${image_tag}` when it processes the template.
-
-### The `image_tag` Variable
-
-The Docker image tag is defined in:
+Each environment combines:
 
 ```text
-terraform/variables.tf
+Terraform workspace
+        +
+Environment .tfvars file
+        +
+Kubernetes namespace
 ```
 
-The variable has a default value of:
+Conceptually:
 
 ```text
-latest
+dev workspace
+    + dev.tfvars
+    └── hello-server-dev
+
+qa workspace
+    + qa.tfvars
+    └── hello-server-qa
+
+prod workspace
+    + prod.tfvars
+    └── hello-server-prod
 ```
 
-This means a normal Terraform deployment can use:
+This allows all three environments to exist simultaneously in the same Kubernetes cluster while keeping their resources isolated.
 
-```powershell
-terraform apply
+### Terraform Workspaces
+
+Terraform workspaces are used to maintain separate local state for each environment.
+
+The project uses:
+
+```text
+default
+dev
+qa
+prod
 ```
 
-and deploy the `latest` image.
+The `default` workspace is retained by Terraform, while `dev`, `qa`, and `prod` are used for environment deployments.
 
-A specific Docker image version can be selected by providing a Git commit SHA:
+Create the environment workspaces with:
 
-```powershell
-terraform apply -var="image_tag=<git-commit-sha>"
+```bash
+./scripts/create-workspaces.sh
+```
+
+The script initializes Terraform and creates any missing workspaces.
+
+Check the available workspaces manually with:
+
+```bash
+cd terraform
+terraform workspace list
+```
+
+The currently selected workspace is marked with `*`.
+
+### Deploy an Environment
+
+The recommended deployment method is the environment helper script.
+
+From the repository root:
+
+```bash
+./scripts/deploy-environment.sh <environment>
+```
+
+Supported values are:
+
+```text
+dev
+qa
+prod
 ```
 
 For example:
 
-```text
-secretninjauser/hello-server:abc123...
+```bash
+./scripts/deploy-environment.sh dev
 ```
 
-This allows the Kubernetes deployment to be tied to a specific application build.
+The script:
 
-### Initialize Terraform
+1. Changes to the Terraform directory.
+2. Runs `terraform init`.
+3. Selects the requested workspace or creates it if necessary.
+4. Applies the matching environment variable file.
 
-From the Terraform directory:
+The equivalent Terraform operation is conceptually:
 
-```powershell
+```bash
 cd terraform
-```
 
-Initialize the Terraform working directory:
-
-```powershell
 terraform init
+
+terraform workspace select dev
+
+terraform apply \
+  -var-file="environments/dev.tfvars"
 ```
 
-This downloads the required Kubernetes provider and prepares Terraform for use.
+Terraform displays the proposed infrastructure changes before applying them and requests confirmation.
 
-### Review Changes
+### Plan an Environment
 
-Before applying changes, review the execution plan:
+A deployment can be reviewed without applying changes by selecting the environment workspace and running `terraform plan`.
 
-```powershell
-terraform plan
+For example:
+
+```bash
+cd terraform
+
+terraform workspace select dev
+
+terraform plan \
+  -var-file="environments/dev.tfvars"
 ```
 
-Terraform compares the desired configuration with the resources currently managed in the cluster.
+This shows the changes Terraform would make without modifying the Kubernetes cluster.
 
-If a specific image version should be deployed:
+### Immutable Image Deployment
 
-```powershell
-terraform plan -var="image_tag=<git-commit-sha>"
+The release workflow publishes application images using the Git commit SHA.
+
+For reproducible deployments, the environment configuration should use that immutable SHA as:
+
+```hcl
+image_tag = "<git-commit-sha>"
 ```
 
-### Apply Changes
-
-Apply the configuration with:
-
-```powershell
-terraform apply
-```
-
-Terraform asks for confirmation before making changes.
-
-A specific image version can be deployed with:
-
-```powershell
-terraform apply -var="image_tag=<git-commit-sha>"
-```
-
-Terraform then updates the Kubernetes Deployment if the requested image differs from the currently deployed version.
-
-### Verify Terraform State
-
-Terraform keeps track of the Kubernetes resources it manages in its state.
-
-The managed resources can be listed with:
-
-```powershell
-terraform state list
-```
-
-Expected resources include:
+The resulting Kubernetes image reference becomes:
 
 ```text
-kubernetes_manifest.deployment
-kubernetes_manifest.service
+<image-repository>:<git-commit-sha>
 ```
 
-The Terraform state files are intentionally excluded from Git by:
+This makes it possible to determine exactly which source revision is running in an environment.
+
+The `latest` tag can still be used for local testing or convenience:
+
+```hcl
+image_tag = "latest"
+```
+
+but it is mutable and therefore does not provide the same reproducibility as a Git commit SHA.
+
+### Application Port Configuration
+
+Terraform supplies `app_port` consistently across the Kubernetes resources.
+
+The value is used for:
 
 ```text
-terraform/.gitignore
+APP_PORT environment variable
+Container port
+Service target port
+Readiness probe
+Liveness probe
 ```
 
-The Terraform provider lock file is committed so that the project uses a consistent provider version.
+This allows an environment to change the application port without manually modifying several Kubernetes resources.
 
-### Verify the Deployment
+### Replica Configuration
 
-After applying the configuration, verify the Kubernetes resources:
+Terraform supplies the minimum and maximum replica values used by the autoscaling configuration.
 
-```powershell
-kubectl get pods
-kubectl get services
-```
-
-The application Pod should reach:
+For example:
 
 ```text
-1/1 Running
+Environment    Minimum    Maximum
+dev            1          2
+qa             1          2
+prod           2          5
 ```
 
-The Service should be available as:
+`min_replicas` is used by the Horizontal Pod Autoscaler as its minimum replica count.
+
+`max_replicas` defines the maximum number of replicas the HPA may create.
+
+The PodDisruptionBudget also uses `min_replicas` as its minimum availability value.
+
+### Terraform Validation
+
+Terraform configuration can be validated manually from the `terraform` directory.
+
+Check formatting:
+
+```bash
+terraform fmt -check -recursive
+```
+
+Initialize Terraform without configuring a backend:
+
+```bash
+terraform init -backend=false
+```
+
+Validate the configuration:
+
+```bash
+terraform validate
+```
+
+The recommended project-wide validation command is:
+
+```bash
+./scripts/validate.sh
+```
+
+This performs the Terraform checks together with the Go tests and Kubernetes validation.
+
+GitHub Actions performs the Terraform formatting and validation checks automatically for pull requests.
+
+### Terraform State
+
+Terraform uses state to track the Kubernetes resources it manages.
+
+For this project, Terraform state is stored locally.
+
+Each Terraform workspace maintains separate state:
 
 ```text
-hello-server
+dev  → local dev state
+qa   → local qa state
+prod → local prod state
 ```
 
-The application can then be tested through Minikube:
+Terraform-generated local state and the `.terraform/` directory are excluded from Git.
 
-```powershell
-minikube service hello-server --url
-```
-
-### Verify No Pending Changes
-
-After applying the desired configuration, run:
-
-```powershell
-terraform plan
-```
-
-When the cluster matches the Terraform configuration, Terraform should report that there are no changes to apply.
-
-This provides a useful verification that Terraform and Kubernetes are in sync.
-
-### Terraform Responsibility
-
-Terraform does not build the Go application or Docker image.
-
-Its responsibility begins after the application image has been released:
+The provider lock file is different:
 
 ```text
-GitHub Actions
+.terraform.lock.hcl
+```
+
+It is committed because it records the selected provider versions rather than infrastructure state.
+
+### Local State Limitation
+
+Local Terraform state is appropriate for this local project, but it is not shared between different machines or users.
+
+A fresh clone creates its own Terraform initialization, workspaces, and local state.
+
+In a shared production environment, Terraform state would normally be stored in a remote backend with appropriate access control and state locking.
+
+Remote state is intentionally not configured for this project.
+
+GitHub Actions therefore validates the Terraform configuration but does not run `terraform apply`.
+
+### Destroy an Environment
+
+Destroy an environment with:
+
+```bash
+./scripts/destroy-environment.sh <environment>
+```
+
+For example:
+
+```bash
+./scripts/destroy-environment.sh dev
+```
+
+The script selects the corresponding Terraform workspace and destroys the resources using the matching variable file.
+
+The equivalent manual command is:
+
+```bash
+cd terraform
+
+terraform workspace select dev
+
+terraform destroy \
+  -var-file="environments/dev.tfvars"
+```
+
+Terraform requests confirmation before destroying the resources.
+
+### Remove Environment Workspaces
+
+After the `dev`, `qa`, and `prod` environments have all been destroyed, their Terraform workspaces can be removed with:
+
+```bash
+./scripts/destroy-workspaces.sh
+```
+
+The script switches to the `default` workspace before deleting the environment workspaces.
+
+Terraform refuses to delete a workspace containing managed infrastructure state.
+
+This provides an additional safeguard against accidentally removing a workspace before its infrastructure has been destroyed.
+
+### Recommended Terraform Workflow
+
+The normal local workflow is:
+
+```text
+Start Minikube
       │
       ▼
-Docker Hub
+Validate Project
       │
       ▼
-Terraform
+Create Workspaces
       │
       ▼
-Kubernetes
+Deploy Environment
       │
       ▼
-Running Pod
+Inspect Resources
+      │
+      ▼
+Destroy Environment
+      │
+      ▼
+Remove Empty Workspaces
 ```
 
-Terraform manages the Kubernetes resources and controls which released Docker image version is deployed.
+Using the project scripts:
+
+```bash
+./scripts/setup-minikube.sh
+./scripts/validate.sh
+./scripts/create-workspaces.sh
+
+./scripts/deploy-environment.sh dev
+./scripts/status.sh dev
+
+./scripts/destroy-environment.sh dev
+./scripts/destroy-workspaces.sh
+```
+
+The helper scripts provide the normal operational workflow while the underlying Terraform commands remain available for inspection, planning, and troubleshooting.
 
 [Back to top](#hello-server)
 
 ## Deploying
 
-The application can be deployed locally to Minikube using Terraform.
+The project supports repeatable local deployments to Minikube using Terraform.
 
-The deployment process consists of:
+Three deployment environments are available:
 
 ```text
-Docker image
-     │
-     ▼
-Docker Hub
-     │
-     ▼
-Terraform
-     │
-     ▼
-Kubernetes / Minikube
-     │
-     ▼
-Running Pod
+dev
+qa
+prod
 ```
 
-### Start the Kubernetes Cluster
+Each environment uses its own Terraform workspace, variable file, and Kubernetes namespace.
 
-Start Minikube:
-
-```powershell
-minikube start
+```text
+Environment    Workspace    Namespace
+dev            dev          hello-server-dev
+qa             qa           hello-server-qa
+prod           prod         hello-server-prod
 ```
+
+The helper scripts provide the recommended deployment workflow.
+
+### 1. Prepare the Kubernetes Cluster
+
+Start or verify the local Minikube cluster:
+
+```bash
+./scripts/setup-minikube.sh
+```
+
+The script starts Minikube when necessary and ensures that Metrics Server is enabled.
 
 Verify the cluster:
 
-```powershell
+```bash
 minikube status
+kubectl get nodes
 ```
 
-Verify the active Kubernetes context:
-
-```powershell
-kubectl config current-context
-```
-
-The expected context is:
+The Kubernetes node should report:
 
 ```text
-minikube
+Ready
 ```
 
-### Initialize Terraform
+### 2. Validate the Project
 
-Change to the Terraform directory:
+Before deploying, run the project validation script:
 
-```powershell
-cd terraform
+```bash
+./scripts/validate.sh
 ```
 
-Initialize the Terraform project:
+The script checks:
 
-```powershell
-terraform init
+- Go unit tests
+- Terraform formatting
+- Terraform configuration
+- Kubernetes manifests against the local Minikube API server
+
+All validation checks should pass before continuing with deployment.
+
+### 3. Prepare Terraform Workspaces
+
+Create the environment workspaces:
+
+```bash
+./scripts/create-workspaces.sh
 ```
 
-### Deploy the Latest Image
-
-The `image_tag` variable defaults to `latest`.
-
-Review the deployment plan:
-
-```powershell
-terraform plan
-```
-
-Apply the configuration:
-
-```powershell
-terraform apply
-```
-
-This deploys:
+The script creates the following workspaces if they do not already exist:
 
 ```text
-secretninjauser/hello-server:latest
+dev
+qa
+prod
 ```
 
-to the Kubernetes cluster.
+Existing workspaces are left unchanged, so the script can safely be run again.
 
-### Deploy a Specific Image Version
+### 4. Select the Image to Deploy
 
-For a reproducible deployment, provide a specific Git commit SHA:
+Each environment defines its application image through its Terraform variable file:
 
-```powershell
-terraform plan -var="image_tag=<git-commit-sha>"
+```text
+terraform/environments/dev.tfvars
+terraform/environments/qa.tfvars
+terraform/environments/prod.tfvars
 ```
 
-If the plan is correct, apply it:
+The relevant values are:
 
-```powershell
-terraform apply -var="image_tag=<git-commit-sha>"
+```hcl
+image_repository = "<image-repository>"
+image_tag        = "<image-tag>"
+```
+
+For a reproducible deployment, use the immutable Git commit SHA published by the release workflow:
+
+```hcl
+image_repository = "<image-repository>"
+image_tag        = "<git-commit-sha>"
+```
+
+The resulting image reference is:
+
+```text
+<image-repository>:<git-commit-sha>
+```
+
+The `latest` tag can be used for local testing:
+
+```hcl
+image_tag = "latest"
+```
+
+but an immutable Git commit SHA is preferred when deploying a specific release.
+
+### 5. Deploy an Environment
+
+Deploy an environment from the repository root with:
+
+```bash
+./scripts/deploy-environment.sh <environment>
+```
+
+For example, deploy development:
+
+```bash
+./scripts/deploy-environment.sh dev
+```
+
+The deployment script:
+
+1. Initializes Terraform.
+2. Selects the requested Terraform workspace.
+3. Creates the workspace if it does not already exist.
+4. Loads the corresponding environment variable file.
+5. Runs `terraform apply`.
+
+Terraform displays the proposed changes before modifying the cluster.
+
+Review the plan and confirm the deployment when prompted.
+
+The same process can be used for QA:
+
+```bash
+./scripts/deploy-environment.sh qa
+```
+
+or production:
+
+```bash
+./scripts/deploy-environment.sh prod
+```
+
+Because each environment uses a separate namespace and Terraform workspace, multiple environments can run simultaneously in the same Minikube cluster.
+
+### 6. Check Deployment Status
+
+Inspect an environment with:
+
+```bash
+./scripts/status.sh <environment>
 ```
 
 For example:
 
-```text
-secretninjauser/hello-server:abc123...
+```bash
+./scripts/status.sh dev
 ```
 
-This allows the Kubernetes deployment to run a specific released version of the application.
+The script displays:
 
-### Verify the Deployment
+- Pods
+- Services
+- Deployments
+- Horizontal Pod Autoscaler
+- PodDisruptionBudget
+- Pod resource usage
 
-Check the Pod:
-
-```powershell
-kubectl get pods
-```
-
-The application Pod should eventually show:
-
-```text
-1/1 Running
-```
-
-Check the Service:
-
-```powershell
-kubectl get services
-```
-
-The Service should be named:
+For a healthy deployment, the application Pods should report:
 
 ```text
-hello-server
+Running
 ```
 
-### Test the Application
+and the Deployment should have its expected replicas available.
 
-Get the Minikube Service URL:
+Individual Kubernetes resources can also be checked manually:
 
-```powershell
-minikube service hello-server --url
+```bash
+kubectl get all -n <namespace>
 ```
 
-Use the returned URL to test the root endpoint:
+For example:
 
-```powershell
-curl http://<minikube-service-url>/
+```bash
+kubectl get all -n hello-server-dev
+```
+
+### 7. Access the Application
+
+The application is exposed through a Kubernetes NodePort Service.
+
+Use Minikube to access the Service for the deployed namespace.
+
+For example, development:
+
+```bash
+minikube service hello-server \
+  --namespace hello-server-dev \
+  --url
+```
+
+Minikube returns a local URL.
+
+Use that URL to test the application:
+
+```bash
+SERVICE_URL="$(minikube service hello-server \
+  --namespace hello-server-dev \
+  --url)"
+```
+
+Test the root endpoint:
+
+```bash
+curl "${SERVICE_URL}/"
 ```
 
 Expected response:
@@ -1576,8 +2441,8 @@ Hello, World!
 
 Test the health endpoint:
 
-```powershell
-curl http://<minikube-service-url>/health
+```bash
+curl "${SERVICE_URL}/health"
 ```
 
 Expected response:
@@ -1586,64 +2451,169 @@ Expected response:
 healthy
 ```
 
-### Verify the Deployed Image
+When using the Docker driver, Minikube may create a local tunnel for the Service.
 
-The image currently used by the Pod can be inspected with:
+If so, the terminal running `minikube service` must remain open while the generated URL is being used.
 
-```powershell
-kubectl get pod -l app=hello-server -o jsonpath="{.items[0].spec.containers[0].image}"
+### 8. Deploy a New Application Version
+
+The release workflow publishes every release using an immutable Git commit SHA.
+
+To deploy a newer application version, update the selected environment's variable file:
+
+```hcl
+image_tag = "<new-git-commit-sha>"
 ```
 
-For a versioned deployment, the output should contain the expected Git commit SHA:
+Then run the deployment script again:
+
+```bash
+./scripts/deploy-environment.sh <environment>
+```
+
+Terraform detects the image change and updates the Kubernetes Deployment.
+
+Kubernetes then performs a rolling update.
+
+The Deployment configuration uses:
 
 ```text
-secretninjauser/hello-server:<git-commit-sha>
+maxUnavailable: 0
+maxSurge: 1
 ```
 
-This provides a direct way to verify which application version is running in Kubernetes.
+which allows a replacement Pod to become available before the previous Pod is removed.
 
-### Verify Terraform
+Monitor the rollout with:
 
-After deployment, check the Terraform state:
-
-```powershell
-terraform state list
+```bash
+kubectl rollout status \
+  deployment/hello-server \
+  -n <namespace>
 ```
 
-Expected resources:
+Check the running image with:
+
+```bash
+kubectl get deployment hello-server \
+  -n <namespace> \
+  -o jsonpath='{.spec.template.spec.containers[0].image}'
+```
+
+### 9. Test Autoscaling
+
+The default application namespace includes helper scripts for generating load:
+
+```bash
+./scripts/start-load.sh
+```
+
+Monitor the HPA:
+
+```bash
+kubectl get hpa \
+  -n hello-server \
+  -w
+```
+
+Under sufficient CPU load, the HPA can increase the number of application replicas up to its configured maximum.
+
+Stop the load generator with:
+
+```bash
+./scripts/stop-load.sh
+```
+
+The HPA will eventually reduce the number of replicas after the load is removed.
+
+### 10. Destroy an Environment
+
+When an environment is no longer required, destroy it through Terraform:
+
+```bash
+./scripts/destroy-environment.sh <environment>
+```
+
+For example:
+
+```bash
+./scripts/destroy-environment.sh dev
+```
+
+The script selects the correct Terraform workspace and variable file before running `terraform destroy`.
+
+Review the destroy plan and confirm when prompted.
+
+Destroying one environment does not remove the other environment namespaces.
+
+For example:
 
 ```text
-kubernetes_manifest.deployment
-kubernetes_manifest.service
+Destroy dev
+    │
+    ├── hello-server-dev removed
+    ├── hello-server-qa remains
+    └── hello-server-prod remains
 ```
 
-Finally, verify that the deployed resources match the Terraform configuration:
+### 11. Remove Terraform Workspaces
 
-```powershell
-terraform plan -var="image_tag=<git-commit-sha>"
+After all environment infrastructure has been destroyed, remove the environment workspaces with:
+
+```bash
+./scripts/destroy-workspaces.sh
 ```
 
-Terraform should report that no changes are required.
+Terraform refuses to delete workspaces that still contain managed infrastructure state.
 
-At this point the application has been:
+The `default` workspace remains after cleanup.
+
+### Deployment Workflow
+
+The complete deployment lifecycle is:
 
 ```text
-Built
-  │
-  ▼
-Published to Docker Hub
-  │
-  ▼
-Selected by Terraform
-  │
-  ▼
-Deployed to Kubernetes
-  │
-  ▼
-Running and Ready
-  │
-  ▼
-Available through the Service
+Released Docker Image
+        │
+        ▼
+Select Environment Image Tag
+        │
+        ▼
+Validate Project
+        │
+        ▼
+Deploy Environment
+        │
+        ▼
+Terraform
+        │
+        ▼
+Kubernetes Namespace
+        │
+        ▼
+Application Resources
+        │
+        ▼
+Verify Deployment
+        │
+        ▼
+Access Application
+        │
+        ▼
+Destroy When Finished
+```
+
+For the common case, the operational commands are:
+
+```bash
+./scripts/setup-minikube.sh
+./scripts/validate.sh
+./scripts/create-workspaces.sh
+
+./scripts/deploy-environment.sh dev
+./scripts/status.sh dev
+
+./scripts/destroy-environment.sh dev
 ```
 
 [Back to top](#hello-server)
@@ -1656,12 +2626,14 @@ This section covers common problems that may occur when running the application 
 
 #### Port Already in Use
 
-If port `8080` is already occupied, Docker may fail to start the container.
+If the host port is already occupied, Docker may fail to start the container.
 
 Use a different host port:
 
-```powershell
-docker run --rm -p 8081:8080 hello-server:local
+```bash
+docker run --rm \
+  -p 8081:8080 \
+  hello-server:local
 ```
 
 The application is then available at:
@@ -1672,17 +2644,26 @@ http://localhost:8081
 
 The container still listens on port `8080`; only the host port has changed.
 
+Alternatively, configure the application itself to use another port:
+
+```bash
+docker run --rm \
+  -e APP_PORT=9090 \
+  -p 9090:9090 \
+  hello-server:local
+```
+
 #### Container Does Not Start
 
 List all containers:
 
-```powershell
+```bash
 docker ps -a
 ```
 
 Check the container logs:
 
-```powershell
+```bash
 docker logs <container-name>
 ```
 
@@ -1696,33 +2677,33 @@ The logs can help identify application startup or configuration problems.
 
 Check the cluster status:
 
-```powershell
+```bash
 minikube status
 ```
 
 View Minikube logs:
 
-```powershell
+```bash
 minikube logs
 ```
 
-This project uses the Docker driver, so Docker Desktop must be running.
+The project uses the Docker driver, so the Docker engine must be running.
 
-The Docker driver can be configured as the default with:
+The project setup script can also be used to start or repair the expected local setup:
 
-```powershell
-minikube config set driver docker
+```bash
+./scripts/setup-minikube.sh
 ```
 
 #### Incorrect Kubernetes Context
 
 Check the currently selected Kubernetes context:
 
-```powershell
+```bash
 kubectl config current-context
 ```
 
-The expected context is:
+The expected context for the local environment is:
 
 ```text
 minikube
@@ -1730,8 +2711,14 @@ minikube
 
 If necessary, switch to it:
 
-```powershell
+```bash
 kubectl config use-context minikube
+```
+
+Verify connectivity:
+
+```bash
+kubectl get nodes
 ```
 
 ---
@@ -1740,25 +2727,77 @@ kubectl config use-context minikube
 
 #### Pod Is Not Ready
 
-Check the Pod status:
+First identify the environment namespace:
 
-```powershell
-kubectl get pods
+```text
+dev  → hello-server-dev
+qa   → hello-server-qa
+prod → hello-server-prod
 ```
 
-If the Pod is not `Running` or `Ready`, inspect it:
+Check the Pods:
 
-```powershell
-kubectl describe pod <pod-name>
+```bash
+kubectl get pods -n <namespace>
+```
+
+If a Pod is not `Running` or `Ready`, inspect it:
+
+```bash
+kubectl describe pod <pod-name> \
+  -n <namespace>
 ```
 
 Check the application logs:
 
-```powershell
-kubectl logs <pod-name>
+```bash
+kubectl logs <pod-name> \
+  -n <namespace>
 ```
 
-The Deployment uses `/health` for both readiness and liveness probes, so the application must successfully respond to that endpoint.
+The Deployment uses `/health` for both readiness and liveness probes.
+
+Probe failures can indicate:
+
+- The application did not start
+- The configured application port is incorrect
+- The application is not responding to `/health`
+- The container is repeatedly restarting
+
+Check recent events in the namespace with:
+
+```bash
+kubectl get events \
+  -n <namespace> \
+  --sort-by=.lastTimestamp
+```
+
+#### Health Probe Port Mismatch
+
+The application port must remain consistent across:
+
+```text
+APP_PORT
+Container port
+Service target port
+Readiness probe
+Liveness probe
+```
+
+Check the configured Deployment:
+
+```bash
+kubectl describe deployment hello-server \
+  -n <namespace>
+```
+
+The Terraform `app_port` variable supplies these values during environment deployment.
+
+If the environment configuration was changed, redeploy it:
+
+```bash
+./scripts/deploy-environment.sh <environment>
+```
 
 ---
 
@@ -1766,196 +2805,536 @@ The Deployment uses `/health` for both readiness and liveness probes, so the app
 
 If Kubernetes cannot pull the Docker image, inspect the Pod:
 
-```powershell
-kubectl describe pod <pod-name>
+```bash
+kubectl describe pod <pod-name> \
+  -n <namespace>
 ```
 
 Check the **Events** section for image-related errors.
 
 Common causes include:
 
-- Incorrect Docker Hub repository name
+- Incorrect image repository
 - Incorrect image tag
 - Typo in the Git commit SHA
-- Image was not successfully pushed to Docker Hub
-- The requested image tag does not exist
+- Image was not successfully published
+- Requested image tag does not exist
+- Registry authentication problems for private repositories
 
-The image can also be tested independently with Docker:
+Test the image independently with Docker:
 
-```powershell
-docker pull secretninjauser/hello-server:<git-commit-sha>
+```bash
+IMAGE_REPOSITORY="<image-repository>"
+IMAGE_TAG="<git-commit-sha>"
+
+docker pull "${IMAGE_REPOSITORY}:${IMAGE_TAG}"
 ```
 
-If Docker cannot pull the image, Kubernetes will not be able to pull it either.
+If Docker cannot pull the requested image, Kubernetes will not be able to deploy it either.
+
+#### Unexpected Image Version
+
+Check the image configured on the Deployment:
+
+```bash
+kubectl get deployment hello-server \
+  -n <namespace> \
+  -o jsonpath='{.spec.template.spec.containers[0].image}'
+```
+
+The project uses:
+
+```yaml
+imagePullPolicy: Always
+```
+
+so Kubernetes checks the registry when starting Pods.
+
+For predictable deployments, use an immutable Git commit SHA instead of relying on the mutable `latest` tag.
+
+---
+
+### Horizontal Pod Autoscaler
+
+#### HPA Does Not Show CPU Usage
+
+Check the HPA:
+
+```bash
+kubectl get hpa \
+  -n <namespace>
+```
+
+Check whether resource metrics are available:
+
+```bash
+kubectl top pods \
+  -n <namespace>
+```
+
+If metrics are unavailable, verify the Minikube Metrics Server addon:
+
+```bash
+minikube addons list
+```
+
+Enable it if necessary:
+
+```bash
+minikube addons enable metrics-server
+```
+
+Metrics Server may require a short period after startup before CPU metrics become available.
+
+#### HPA Does Not Scale
+
+Check the current HPA configuration:
+
+```bash
+kubectl describe hpa hello-server \
+  -n <namespace>
+```
+
+Verify that:
+
+- Metrics Server is working
+- CPU metrics are available
+- Application load is sufficient
+- Resource requests are configured
+- The HPA has not already reached `max_replicas`
 
 ---
 
 ### Terraform
 
-#### Unexpected Terraform Changes
+#### Wrong Workspace Selected
 
-Review the current plan:
+Check the current Terraform workspace:
 
-```powershell
-terraform plan
+```bash
+cd terraform
+terraform workspace show
 ```
 
-When deploying a specific image version, make sure the same `image_tag` is provided:
+List all workspaces:
 
-```powershell
-terraform plan -var="image_tag=<git-commit-sha>"
+```bash
+terraform workspace list
 ```
 
-If no `image_tag` is specified, Terraform uses the default:
+Select the required environment:
+
+```bash
+terraform workspace select <environment>
+```
+
+The workspace should match the environment variable file being used.
+
+For example:
 
 ```text
-latest
+dev workspace  → environments/dev.tfvars
+qa workspace   → environments/qa.tfvars
+prod workspace → environments/prod.tfvars
 ```
 
-This can result in Terraform showing a change if a specific version is currently deployed.
+Using the deployment helper script avoids having to select these manually:
+
+```bash
+./scripts/deploy-environment.sh <environment>
+```
+
+#### Unexpected Terraform Changes
+
+Make sure the correct workspace and variable file are being used.
+
+For example:
+
+```bash
+cd terraform
+
+terraform workspace select dev
+
+terraform plan \
+  -var-file="environments/dev.tfvars"
+```
+
+Check values such as:
+
+```text
+image_repository
+image_tag
+app_port
+namespace
+min_replicas
+max_replicas
+```
+
+An incorrect workspace or variable file can cause Terraform to compare the desired configuration against the wrong local state.
 
 #### Terraform Cannot Connect to Kubernetes
 
 Verify the Kubernetes context:
 
-```powershell
+```bash
 kubectl config current-context
 ```
 
-It should be:
+For the local project it should normally be:
 
 ```text
 minikube
 ```
 
-Verify that the cluster is accessible:
+Verify cluster connectivity:
 
-```powershell
+```bash
 kubectl get nodes
 ```
 
-If the Minikube cluster is running and the Kubernetes context is correct, Terraform can use the same Kubernetes configuration through the Kubernetes provider.
+Check Minikube:
+
+```bash
+minikube status
+```
+
+If necessary, prepare the cluster again with:
+
+```bash
+./scripts/setup-minikube.sh
+```
+
+#### Terraform State Does Not Match the Cluster
+
+Terraform state is stored locally for this project.
+
+If Kubernetes resources are manually deleted outside Terraform, the local state may temporarily differ from the actual cluster.
+
+Review the environment with:
+
+```bash
+cd terraform
+
+terraform workspace select <environment>
+
+terraform plan \
+  -var-file="environments/<environment>.tfvars"
+```
+
+Terraform will compare its state with the current Kubernetes resources and show the changes required to restore the desired configuration.
+
+Whenever possible, create and destroy environment resources through Terraform rather than manually deleting Terraform-managed Kubernetes resources.
 
 ---
 
 ### Service Access Problems
 
-If the application cannot be reached through Minikube, first check the Pods and Services:
+If the application cannot be reached through Minikube, first check the environment:
 
-```powershell
-kubectl get pods
-kubectl get services
+```bash
+./scripts/status.sh <environment>
 ```
 
-The application Pod should be `Running` and `Ready`.
+Verify that the application Pods are `Running` and `Ready`.
 
 Inspect the Service:
 
-```powershell
-kubectl describe service hello-server
+```bash
+kubectl describe service hello-server \
+  -n <namespace>
 ```
 
-Get the Minikube Service URL again:
+Request the Minikube Service URL again:
 
-```powershell
-minikube service hello-server --url
+```bash
+minikube service hello-server \
+  --namespace <namespace> \
+  --url
 ```
 
-The application should then be accessible through the returned URL.
+When using the Docker driver, Minikube may create a local tunnel.
+
+If a tunnel is created, keep that terminal running while accessing the returned URL.
+
+Test the health endpoint using the returned address:
+
+```bash
+curl "<service-url>/health"
+```
+
+Expected response:
+
+```text
+healthy
+```
+
+---
+
+### Project Validation
+
+When the cause of a problem is unclear, run the complete local validation:
+
+```bash
+./scripts/validate.sh
+```
+
+This checks:
+
+- Go unit tests
+- Terraform formatting
+- Terraform configuration
+- Kubernetes manifests against the Minikube API server
+
+A successful validation helps separate configuration problems from runtime deployment problems.
 
 ---
 
 ### General Debugging Order
 
-When troubleshooting a deployment problem, check the components from the bottom up:
+When troubleshooting a deployment, check the components from the bottom up:
 
 ```text
-Minikube cluster
-      │
-      ▼
-Kubernetes Pod
-      │
-      ▼
+Docker / Minikube
+        │
+        ▼
+Kubernetes Node
+        │
+        ▼
+Namespace
+        │
+        ▼
+Deployment / Pod
+        │
+        ▼
 Application container
-      │
-      ▼
+        │
+        ▼
 /health endpoint
-      │
-      ▼
+        │
+        ▼
 Kubernetes Service
-      │
-      ▼
+        │
+        ▼
 External access
 ```
 
 Useful commands to start with are:
 
-```powershell
+```bash
 minikube status
-kubectl get pods
-kubectl get services
-kubectl describe pod <pod-name>
-kubectl logs <pod-name>
-terraform plan
+kubectl get nodes
+./scripts/status.sh <environment>
+kubectl describe pod <pod-name> -n <namespace>
+kubectl logs <pod-name> -n <namespace>
+kubectl get events -n <namespace> --sort-by=.lastTimestamp
 ```
 
-Checking these components in order usually makes it possible to identify which layer is causing the problem.
+For Terraform-related problems, also check:
+
+```bash
+cd terraform
+terraform workspace show
+terraform plan -var-file="environments/<environment>.tfvars"
+```
+
+Following the deployment path in order usually makes it easier to identify which layer is causing the problem.
 
 [Back to top](#hello-server)
 
 ## Complete Delivery Flow
 
-The project demonstrates a complete application delivery workflow, starting with source code and ending with a running application in Kubernetes.
+The project demonstrates a complete application delivery workflow from source code changes to a running application in Kubernetes.
 
-The complete flow is:
+The workflow separates application validation, container release, and infrastructure deployment into distinct stages.
+
+### 1. Development
+
+Application and infrastructure changes are developed in Git.
+
+The repository contains:
 
 ```text
-Developer
-    │
-    ▼
-GitHub Repository
-    │
-    ▼
-GitHub Actions
-    │
-    ├── Go Unit Tests
-    │
-    ├── Docker Build
-    │
-    ├── Start Container
-    │
-    └── /health Check
-    │
-    ▼
-Docker Hub
-    │
-    ├── :<git-commit-sha>
-    │
-    └── :latest
-    │
-    ▼
-Terraform
-    │
-    ├── Kubernetes Provider
-    ├── Deployment
-    └── Service
-    │
-    ▼
-Minikube / Kubernetes
-    │
-    ▼
-Pod
-    │
-    ▼
-hello-server container
-    │
-    ├── /
-    └── /health
+Go application
+Dockerfile
+Kubernetes manifests
+Terraform configuration
+Helper scripts
+GitHub Actions workflow
 ```
 
-### 1. Source Code
+Changes are submitted through a pull request targeting `main`.
 
-The developer implements the application in Go.
+### 2. Pull Request Validation
+
+GitHub Actions runs the `validate` job for pull requests.
+
+The validation pipeline checks:
+
+```text
+Source Change
+     │
+     ▼
+Terraform Format
+     │
+     ▼
+Terraform Validate
+     │
+     ▼
+Kubernetes Manifest Validation
+     │
+     ▼
+Go Unit Tests
+     │
+     ▼
+Docker Build
+     │
+     ▼
+Temporary Container
+     │
+     ▼
+GET /health
+```
+
+If any validation step fails, the pull request validation fails.
+
+Pull requests never publish container images.
+
+### 3. Merge and Release
+
+After a validated pull request is merged into `main`, GitHub Actions runs the `release` job.
+
+The release job builds the application image for the exact Git commit and publishes it to the configured Docker Hub repository.
+
+Two image tags are published:
+
+```text
+<image-repository>:<git-commit-sha>
+<image-repository>:latest
+```
+
+The Git commit SHA provides an immutable relationship between:
+
+```text
+Source Commit
+     │
+     ▼
+Docker Image
+```
+
+The `latest` tag provides a convenient reference to the most recently released image.
+
+### 4. Environment Configuration
+
+Terraform environment files define which released image and runtime configuration should be deployed.
+
+The project supports:
+
+```text
+dev
+qa
+prod
+```
+
+Each environment combines:
+
+```text
+Terraform Workspace
+        +
+Environment tfvars
+        +
+Kubernetes Namespace
+```
+
+For example:
+
+```text
+dev  → dev workspace  → hello-server-dev
+qa   → qa workspace   → hello-server-qa
+prod → prod workspace → hello-server-prod
+```
+
+For reproducible deployments, the environment's `image_tag` should reference the immutable Git commit SHA produced by the release workflow.
+
+### 5. Terraform Deployment
+
+The selected environment is deployed with:
+
+```bash
+./scripts/deploy-environment.sh <environment>
+```
+
+Terraform reads the standalone Kubernetes manifests from:
+
+```text
+k8s/
+```
+
+and applies environment-specific values such as:
+
+```text
+Namespace
+Image repository
+Image tag
+Application port
+Minimum replicas
+Maximum replicas
+```
+
+Terraform then manages the required Kubernetes resources.
+
+### 6. Kubernetes Runtime
+
+Terraform deploys the application resources into the selected Kubernetes namespace.
+
+The deployed resources include:
+
+```text
+Namespace
+    │
+    ├── ServiceAccount
+    │
+    ├── Deployment
+    │       │
+    │       └── Application Pods
+    │
+    ├── Service
+    │
+    ├── HorizontalPodAutoscaler
+    │
+    └── PodDisruptionBudget
+```
+
+The Deployment runs the released Docker image and provides:
+
+- Non-root container execution
+- Resource requests and limits
+- Readiness and liveness probes
+- Rolling updates
+- Restricted container privileges
+- Dedicated ServiceAccount
+
+The Horizontal Pod Autoscaler adjusts the number of application replicas based on CPU utilization.
+
+The PodDisruptionBudget helps maintain availability during voluntary disruptions.
+
+### 7. Application Traffic
+
+The Kubernetes Service exposes the application Pods.
+
+The request path is:
+
+```text
+Client
+   │
+   ▼
+Kubernetes Service
+   │
+   ▼
+Ready Application Pod
+   │
+   ▼
+Go HTTP Server
+```
 
 The application provides:
 
@@ -1964,239 +3343,322 @@ GET /        → Hello, World!
 GET /health  → healthy
 ```
 
-The application also handles graceful shutdown when it receives `SIGINT` or `SIGTERM`.
+Only Pods that pass the readiness probe receive Service traffic.
 
-### 2. Unit Testing
+### 8. Health and Scaling
 
-Go unit tests verify the HTTP handlers:
+The `/health` endpoint provides a shared application health signal.
 
-```powershell
-go test ./...
-```
-
-The tests verify both HTTP status codes and response bodies.
-
-### 3. Docker Build
-
-The application is packaged using the multi-stage `Dockerfile`.
-
-The builder stage compiles the Go application:
+It is used by:
 
 ```text
-Go source code
-      │
-      ▼
-Go builder image
-      │
-      ▼
-hello-server binary
+/health
+   │
+   ├── CI container validation
+   ├── Kubernetes readiness probe
+   └── Kubernetes liveness probe
 ```
 
-The binary is then copied into the smaller runtime image.
+CPU metrics are provided by Kubernetes Metrics Server.
 
-### 4. CI Container Validation
+The HPA uses those metrics to scale between the minimum and maximum replica values configured for the environment.
 
-GitHub Actions starts the newly built Docker image as a temporary container.
+### 9. Operational Workflow
 
-The workflow requests:
+The project helper scripts provide the normal local lifecycle:
+
+```bash
+./scripts/setup-minikube.sh
+./scripts/validate.sh
+./scripts/create-workspaces.sh
+
+./scripts/deploy-environment.sh <environment>
+./scripts/status.sh <environment>
+
+./scripts/destroy-environment.sh <environment>
+```
+
+After all environments have been destroyed, the environment workspaces can also be removed:
+
+```bash
+./scripts/destroy-workspaces.sh
+```
+
+### End-to-End Flow
+
+The complete delivery path is:
 
 ```text
-GET /health
-```
-
-The image is considered valid only if the container starts successfully and the health endpoint responds successfully.
-
-### 5. Image Publication
-
-After all CI validation steps succeed on `main`, the image is published to Docker Hub.
-
-The image receives two tags:
-
-```text
-secretninjauser/hello-server:<git-commit-sha>
-secretninjauser/hello-server:latest
-```
-
-The Git commit SHA provides an immutable reference to the specific application build.
-
-### 6. Image Selection
-
-Terraform controls which Docker image version is deployed.
-
-The default is:
-
-```text
-latest
-```
-
-A specific version can be selected using:
-
-```powershell
-terraform apply -var="image_tag=<git-commit-sha>"
-```
-
-This allows the deployment to reference the exact image produced by a specific Git commit.
-
-### 7. Kubernetes Deployment
-
-Terraform applies the Kubernetes configuration to Minikube.
-
-Kubernetes then pulls the selected image from Docker Hub and starts it inside a Pod.
-
-The Deployment maintains the desired application state.
-
-### 8. Health Monitoring
-
-Once the Pod starts, Kubernetes uses `/health` for two purposes:
-
-```text
-Readiness Probe
+Developer
     │
-    └── Determines whether the Pod can receive traffic
-
-Liveness Probe
+    ▼
+Git / GitHub
     │
-    └── Detects whether the application is still healthy
+    ▼
+Pull Request
+    │
+    ▼
+GitHub Actions
+    │
+    └── Validation
+          │
+          ├── Go
+          ├── Docker
+          ├── Terraform
+          └── Kubernetes
+    │
+    ▼
+Merge to main
+    │
+    ▼
+GitHub Actions
+    │
+    └── Release
+          │
+          ▼
+      Docker Hub
+          │
+          ├── :<git-commit-sha>
+          └── :latest
+          │
+          ▼
+      Terraform
+          │
+          ├── Workspace
+          ├── Environment tfvars
+          └── Kubernetes manifests
+          │
+          ▼
+      Kubernetes / Minikube
+          │
+          ├── Namespace
+          ├── ServiceAccount
+          ├── Deployment
+          ├── Service
+          ├── HPA
+          └── PodDisruptionBudget
+          │
+          ▼
+      Application Pods
+          │
+          ▼
+      Hello, World!
 ```
 
-The Pod becomes ready after the readiness probe succeeds.
-
-### 9. Service Exposure
-
-The Kubernetes Service provides stable network access to the Pod.
-
-With Minikube, the application can be accessed using:
-
-```powershell
-minikube service hello-server --url
-```
-
-The final request travels through:
-
-```text
-Client
-  │
-  ▼
-Kubernetes Service
-  │
-  ▼
-Pod
-  │
-  ▼
-Go HTTP server
-  │
-  ├── /
-  └── /health
-```
-
-### End-to-End Responsibility
-
-Each technology has a clearly defined responsibility:
-
-| Component | Responsibility |
-|---|---|
-| Go | Implements the application |
-| Go tests | Verify application behavior |
-| Docker | Packages the application |
-| GitHub Actions | Automates testing, building, validation, and publishing |
-| Docker Hub | Stores released container images |
-| Kubernetes | Runs and manages the application |
-| Minikube | Provides the local Kubernetes cluster |
-| Terraform | Manages the Kubernetes resources and image version |
-
-The project therefore demonstrates the complete path from source code to a running, monitored application:
-
-```text
-Source Code
-    ↓
-Unit Tests
-    ↓
-Docker Image
-    ↓
-Container Health Check
-    ↓
-Docker Hub
-    ↓
-Terraform
-    ↓
-Kubernetes
-    ↓
-Running Pod
-    ↓
-Kubernetes Service
-    ↓
-HTTP Client
-```
+This provides a traceable path from source code to a released container image and finally to an environment-specific Kubernetes deployment.
 
 [Back to top](#hello-server)
 
 ## Future Improvements
 
-The current project demonstrates the complete path from application source code to a containerized and Kubernetes-deployed application. The following improvements could be considered for a more production-oriented implementation.
+The project already implements the core application delivery lifecycle, including automated validation and releases, immutable container images, Kubernetes health checks and autoscaling, environment isolation, security controls, and Terraform-managed infrastructure.
 
-### Configuration Management
+The next improvements would focus on moving from a local development platform toward a shared cloud environment.
 
-- Make the application port configurable through an environment variable.
-- Keep environment-specific configuration outside the application code and Docker image.
-- Allow different environments to provide different runtime configuration without rebuilding the image.
+### Remote Terraform State
 
-### Integration and End-to-End Testing
+Terraform currently uses local state separated through workspaces.
 
-- Add integration tests that exercise the application through its actual HTTP interface.
-- Run the integration tests against the built Docker container in CI.
-- Extend CI validation beyond unit tests to verify the complete application runtime.
+For a shared environment, the state should be moved to a remote backend.
 
-### Deployment Rollbacks
+A remote backend would provide:
 
-- Document and test Kubernetes Deployment rollbacks.
-- Use immutable image tags to allow deployments to return to a known-good application version.
-- Ensure rollback procedures keep Terraform's desired state and the Kubernetes state consistent.
+- Shared infrastructure state
+- State locking
+- Controlled access
+- Improved collaboration
+- Safer CI/CD integration
+- State persistence independent of a developer workstation
 
-### Secrets and Sensitive Configuration
+For an AWS-based deployment, Terraform state could be stored using AWS infrastructure rather than remaining on the local machine.
 
-- Introduce proper secret management for sensitive configuration such as API keys, credentials, and tokens.
-- Avoid storing sensitive values in Git or plain-text Terraform configuration.
-- Integrate a dedicated secret-management solution for production environments.
+This would also make it practical for the CI/CD pipeline to manage infrastructure deployments instead of limiting CI to Terraform validation.
+
+### Cloud Infrastructure
+
+Minikube is appropriate for local development and testing, but the next step would be deploying the application to a cloud provider such as AWS.
+
+Terraform could be extended to provision the underlying cloud infrastructure in addition to the Kubernetes application resources.
+
+The architecture could evolve from:
+
+```text
+Local Workstation
+      │
+      ▼
+Docker
+      │
+      ▼
+Minikube
+      │
+      ▼
+Kubernetes
+```
+
+to:
+
+```text
+Terraform
+    │
+    ▼
+AWS Infrastructure
+    │
+    ▼
+Managed Kubernetes
+    │
+    ▼
+Application
+```
+
+This would move infrastructure provisioning, networking, compute, and Kubernetes cluster management into the Terraform workflow.
+
+### Managed Kubernetes
+
+Instead of Minikube, the application could run on a managed Kubernetes service such as Amazon EKS.
+
+This would provide a production-oriented Kubernetes control plane while preserving the existing Kubernetes Deployment, Service, HPA, PodDisruptionBudget, and ServiceAccount model.
+
+The existing manifests and Terraform design provide a foundation that could be adapted to a managed cluster.
+
+### Cloud Container Registry
+
+Docker Hub could be replaced by a cloud-native container registry such as Amazon ECR.
+
+The delivery path would then become:
+
+```text
+Source
+   │
+   ▼
+CI/CD
+   │
+   ▼
+Container Build
+   │
+   ▼
+Amazon ECR
+   │
+   ▼
+Amazon EKS
+```
+
+This would keep the released application images and Kubernetes runtime within the same cloud platform.
+
+Immutable image versioning using Git commit SHA tags could continue to be used.
+
+### Cloud-Native CI/CD
+
+The current GitHub Actions workflow could also be replaced or extended with cloud-native CI/CD services.
+
+A future pipeline could manage:
+
+```text
+Source Validation
+       │
+       ▼
+Container Build
+       │
+       ▼
+Container Registry
+       │
+       ▼
+Terraform Plan
+       │
+       ▼
+Terraform Apply
+       │
+       ▼
+Kubernetes Deployment
+```
+
+With remote Terraform state in place, infrastructure deployment could become part of the automated delivery pipeline.
+
+For systems that continue to use GitHub Actions, cloud access could instead use short-lived identity federation such as OIDC rather than long-lived cloud credentials stored as repository secrets.
+
+### Ingress and TLS
+
+The current application is exposed locally through a Kubernetes NodePort Service.
+
+A cloud deployment could introduce an Ingress or cloud load balancer to provide a production HTTP entry point.
+
+TLS could then be added to provide HTTPS access.
+
+Conceptually:
+
+```text
+Internet
+   │
+   ▼
+HTTPS
+   │
+   ▼
+Load Balancer / Ingress
+   │
+   ▼
+Kubernetes Service
+   │
+   ▼
+Application Pods
+```
 
 ### Observability
 
-- Introduce structured application logging.
-- Add application and infrastructure metrics.
-- Add distributed tracing if the application becomes part of a larger service architecture.
-- Integrate the application with a centralized monitoring and logging platform.
+The application currently provides health checks and Kubernetes resource metrics.
 
-### Container Security
+A production deployment could add centralized:
 
-- Run the application as a non-root user.
-- Further minimize the runtime Docker image.
-- Scan Docker images for known vulnerabilities.
-- Regularly update the base image and application dependencies.
+- Application logging
+- Infrastructure logging
+- Metrics
+- Dashboards
+- Alerting
+- Distributed tracing
 
-### CI/CD Improvements
+This would provide visibility beyond basic Pod health and CPU utilization.
 
-- Add dependency and security scanning to the CI pipeline.
-- Separate build, test, and deployment stages more explicitly.
-- Introduce automated deployment to a non-production environment.
-- Add approval gates before production deployments.
+### Secrets Management
 
-### Infrastructure and Environments
+The current application does not require application secrets.
 
-- Introduce separate configurations for development, QA, staging, and production.
-- Store Terraform state remotely instead of locally.
-- Enable Terraform state locking where supported.
-- Replace Minikube with a managed or remotely hosted Kubernetes cluster for production use.
+If future functionality introduces credentials, API keys, certificates, or other sensitive configuration, these should be managed through an appropriate secrets-management system rather than stored in source control or Terraform variable files.
 
-### Deployment Strategies
+A cloud deployment could integrate with the cloud provider's secrets-management services.
 
-- Consider blue-green or canary deployments for production releases.
-- Introduce automated rollback based on deployment health.
-- Use Kubernetes-native or dedicated deployment tooling when the number of services grows.
+### Long-Term Architecture
 
-### Scalability
+A possible evolution of the project is:
 
-- Configure multiple application replicas.
-- Introduce resource requests and limits.
-- Add Horizontal Pod Autoscaling where appropriate.
-- Evaluate Kubernetes Ingress or an API gateway for external traffic management.
+```text
+Developer
+    │
+    ▼
+Source Repository
+    │
+    ▼
+CI/CD Pipeline
+    │
+    ├── Tests
+    ├── Security / Validation
+    ├── Container Build
+    └── Terraform Deployment
+    │
+    ▼
+Cloud Container Registry
+    │
+    ▼
+AWS
+    │
+    ├── Remote Terraform State
+    ├── Managed Kubernetes
+    ├── Cloud Networking
+    ├── Load Balancing / TLS
+    ├── Secrets Management
+    └── Observability
+    │
+    ▼
+Application
+```
+
+The current project therefore serves as a local implementation of the core delivery model, while remote state and cloud infrastructure would be the natural next steps toward a shared production platform.
 
 [Back to top](#hello-server)
